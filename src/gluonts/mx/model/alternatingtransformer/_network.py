@@ -63,7 +63,7 @@ class AltHierNetworkBase(HybridBlock):
         cardinality: List[int],
         embedding_dimension: int,
         lags_seq: List[int],
-        reconciliation_method: str = "ols",  # "ols" | "bottom_up"
+        reconciliation_method: str = "bottom_up",  # "ols" | "bottom_up"
         scaling: bool = True,
         **kwargs,
     ) -> None:
