@@ -1,29 +1,3 @@
-# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
-# You may not use this file except in compliance with the License.
-# A copy of the License is located at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# or in the "license" file accompanying this file. This file is distributed
-# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-# express or implied. See the License for the specific language governing
-# permissions and limitations under the License.
-
-"""Networks used by the Alternating Transformer model."""
-
-from typing import Dict
-
-import mxnet as mx
-from mxnet.gluon import HybridBlock, nn
-
-from gluonts.core.component import validated
-from gluonts.mx import Tensor
-
-from .layers import AlternatingTransformerLayer
-
-
 class AlternatingTransformerNetwork(HybridBlock):
     """Stack of alternating transformer layers producing hidden features."""
 
@@ -34,12 +8,14 @@ class AlternatingTransformerNetwork(HybridBlock):
         num_series: int,
         num_timesteps: int,
         config: Dict,
+        debug: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.num_series = num_series
         self.num_timesteps = num_timesteps
         self.model_dim = config["model_dim"]
+        self.debug = debug
 
         with self.name_scope():
             self.spatial_token = self.params.get(
@@ -72,9 +48,21 @@ class AlternatingTransformerNetwork(HybridBlock):
         s_tok = F.expand_dims(s_tok, axis=2)
         t_tok = F.expand_dims(temporal_token, axis=0)
         t_tok = F.expand_dims(t_tok, axis=1)
+        if self.debug:
+            try:
+                print("spatial_token:", getattr(s_tok, "shape", None))
+                print("temporal_token:", getattr(t_tok, "shape", None))
+                print("tokenized input:", getattr(x, "shape", None))
+            except Exception:
+                pass
         x = F.broadcast_add(x, s_tok)
         x = F.broadcast_add(x, t_tok)
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
+            if self.debug:
+                try:
+                    print(f"input to layer {i}", getattr(x, "shape", None))
+                except Exception:
+                    pass
             x = layer(x)
         return x
 
