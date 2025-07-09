@@ -17,6 +17,7 @@ from typing import Optional, List
 from functools import partial
 
 from mxnet.gluon import HybridBlock
+from gluonts.model.predictor import Predictor
 
 from gluonts.core.component import validated
 from gluonts.dataset.common import Dataset
