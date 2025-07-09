@@ -50,6 +50,8 @@ from ._network import (
     AlternatingTransformerNetwork,
     AlternatingTransformerTrainingNetwork,
     AlternatingTransformerPredictionNetwork,
+    AlternatingTransformerHierarchicalTrainingNetwork,
+    AlternatingTransformerHierarchicalPredictionNetwork,
 )
 
 
@@ -71,6 +73,8 @@ class AlternatingTransformerEstimator(GluonEstimator):
         validation_sampler: Optional[InstanceSampler] = None,
         batch_size: int = 32,
         debug: bool = False,
+        S: Optional[mx.nd.NDArray] = None,
+        loss: str = "mse",
     ) -> None:
         super().__init__(trainer=trainer, batch_size=batch_size)
 
@@ -83,6 +87,8 @@ class AlternatingTransformerEstimator(GluonEstimator):
         self.distr_output = distr_output
         self.num_parallel_samples = num_parallel_samples
         self.debug = debug
+        self.S = S
+        self.loss = loss
         self.train_sampler = (
             train_sampler
             if train_sampler is not None
@@ -179,6 +185,14 @@ class AlternatingTransformerEstimator(GluonEstimator):
             config=self.config,
             debug=self.debug,
         )
+        if self.S is not None:
+            return AlternatingTransformerHierarchicalTrainingNetwork(
+                base_network=base_net,
+                prediction_length=self.prediction_length,
+                S=self.S,
+                loss=self.loss,
+                distr_output=self.distr_output,
+            )
         return AlternatingTransformerTrainingNetwork(
             base_network=base_net,
             prediction_length=self.prediction_length,
@@ -195,13 +209,24 @@ class AlternatingTransformerEstimator(GluonEstimator):
             config=self.config,
             debug=self.debug,
         )
-        prediction_network = AlternatingTransformerPredictionNetwork(
-            base_network=base_net,
-            prediction_length=self.prediction_length,
-            distr_output=self.distr_output,
-            num_samples=self.num_parallel_samples,
-            params=trained_network.collect_params(),
-        )
+        if self.S is not None:
+            prediction_network = AlternatingTransformerHierarchicalPredictionNetwork(
+                base_network=base_net,
+                prediction_length=self.prediction_length,
+                S=self.S,
+                loss=self.loss,
+                distr_output=self.distr_output,
+                num_samples=self.num_parallel_samples,
+                params=trained_network.collect_params(),
+            )
+        else:
+            prediction_network = AlternatingTransformerPredictionNetwork(
+                base_network=base_net,
+                prediction_length=self.prediction_length,
+                distr_output=self.distr_output,
+                num_samples=self.num_parallel_samples,
+                params=trained_network.collect_params(),
+            )
         prediction_splitter = self._create_instance_splitter("test")
         return RepresentableBlockPredictor(
             input_transform=transformation + prediction_splitter,
