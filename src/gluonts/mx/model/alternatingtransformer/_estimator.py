@@ -14,6 +14,7 @@
 """Estimator definition for the Alternating Transformer model."""
 
 from typing import Optional, List
+import numpy as np
 from functools import partial
 
 from mxnet.gluon import HybridBlock
