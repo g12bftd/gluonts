@@ -61,6 +61,7 @@ class AlternatingTransformerEstimator(GluonEstimator):
     @validated()
     def __init__(
         self,
+        S: np.ndarray,
         prediction_length: int,
         freq: str,
         num_series: int,
@@ -73,7 +74,6 @@ class AlternatingTransformerEstimator(GluonEstimator):
         validation_sampler: Optional[InstanceSampler] = None,
         batch_size: int = 32,
         debug: bool = False,
-        S: Optional[mx.nd.NDArray] = None,
         loss: str = "mse",
     ) -> None:
         super().__init__(trainer=trainer, batch_size=batch_size)
