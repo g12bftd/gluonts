@@ -1,286 +1,253 @@
-# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
-# You may not use this file except in compliance with the License.
-# A copy of the License is located at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# or in the "license" file accompanying this file. This file is distributed
-# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-# express or implied. See the License for the specific language governing
-# permissions and limitations under the License.
+# -----------------------------------------------------------------------------#
+# Estimator for Alternating-Attention Transformer on Hierarchical Data          #
+# -----------------------------------------------------------------------------#
 
-"""Estimator definition for the Alternating Transformer model."""
+from typing import List, Optional
 
-from typing import Optional, List
 import numpy as np
-from functools import partial
-
 from mxnet.gluon import HybridBlock
-from gluonts.model.predictor import Predictor
 
 from gluonts.core.component import validated
-from gluonts.dataset.common import Dataset
 from gluonts.dataset.field_names import FieldName
-from gluonts.dataset.loader import (
-    DataLoader,
-    TrainDataLoader,
-    ValidationDataLoader,
-)
-from gluonts.model.forecast_generator import DistributionForecastGenerator
-from gluonts.mx.batchify import batchify
-from gluonts.mx.distribution import DistributionOutput, StudentTOutput
-from gluonts.mx.model.estimator import GluonEstimator
-from gluonts.mx.model.predictor import RepresentableBlockPredictor
-from gluonts.mx.trainer import Trainer
-from gluonts.mx.util import get_hybrid_forward_input_names
 from gluonts.transform import (
+    AddAgeFeature,
     AddObservedValuesIndicator,
-    ExpectedNumInstanceSampler,
-    InstanceSampler,
-    InstanceSplitter,
+    AddTimeFeatures,
+    AsNumpyArray,
+    Chain,
+    RemoveFields,
+    SetField,
     SelectFields,
-    TestSplitSampler,
-    Transformation,
+)
+from gluonts.transform.sampler import (
+    ExpectedNumInstanceSampler,
     ValidationSplitSampler,
+    TestSplitSampler,
 )
-from gluonts.transform.feature import DummyValueImputation
+from gluonts.time_feature import (
+    get_lags_for_frequency,
+    time_features_from_frequency_str,
+)
+from gluonts.mx.distribution import DistributionOutput, StudentTOutput
+from gluonts.mx.trainer import Trainer
+from gluonts.dataset.loader import TrainDataLoader, ValidationDataLoader
+from gluonts.mx.batchify import batchify
+from gluonts.mx.model.estimator import GluonEstimator
+from gluonts.mx.util import copy_parameters, get_hybrid_forward_input_names
+from gluonts.mx.model.predictor import RepresentableBlockPredictor
 
+from .alternating_encoder import AlternatingTransformerEncoder
+from .mlp_decoder import HierMLPDecoder
 from ._network import (
-    AlternatingTransformerNetwork,
-    AlternatingTransformerTrainingNetwork,
-    AlternatingTransformerPredictionNetwork,
-    AlternatingTransformerHierarchicalTrainingNetwork,
-    AlternatingTransformerHierarchicalPredictionNetwork,
+    AltHierTrainingNetwork,
+    AltHierPredictionNetwork,
 )
 
+# -----------------------------------------------------------------------------#
 
-class AlternatingTransformerEstimator(GluonEstimator):
-    """A minimal estimator for the Alternating Transformer model."""
+
+class AltTransformerHierarchicalEstimator(GluonEstimator):
+    """
+    Alternating-attention Transformer with optional OLS or bottom-up
+    reconciliation.
+    """
 
     @validated()
     def __init__(
         self,
-        S: np.ndarray,
+        freq: str,
         prediction_length: int,
+        S: np.ndarray,  # (M × B) summation matrix
+        cardinality: List[int],
+        *,
+        embedding_dimension: int = 20,
         context_length: Optional[int] = None,
         trainer: Trainer = Trainer(),
         dropout_rate: float = 0.1,
-        freq: str,
-        num_series: int,
-        embedding_dimension: int = 20,
         distr_output: DistributionOutput = StudentTOutput(),
         model_dim: int = 32,
         inner_ff_dim_scale: int = 4,
-        pre_seq: str = "dn",
-        post_seq: str = "drn",
-        act_type: str = "softrelu",
         num_heads: int = 8,
         scaling: bool = True,
         lags_seq: Optional[List[int]] = None,
-        time_features: Optional[List[TimeFeature]] = None,
-        use_feat_dynamic_real: bool = False,
-        use_feat_static_cat: bool = False,
+        time_features: Optional[List] = None,
+        reconciliation_method: str = "ols",  # "ols" | "bottom_up"
         num_parallel_samples: int = 100,
-        train_sampler: Optional[InstanceSampler] = None,
-        validation_sampler: Optional[InstanceSampler] = None,
+        coherent_train_samples: bool = True,
         batch_size: int = 32,
     ) -> None:
         super().__init__(trainer=trainer, batch_size=batch_size)
 
-        assert (
-            prediction_length > 0
-        ), "The value of `prediction_length` should be > 0"
-        assert (
-            context_length is None or context_length > 0
-        ), "The value of `context_length` should be > 0"
-        assert dropout_rate >= 0, "The value of `dropout_rate` should be >= 0"
-
-        assert (
-            embedding_dimension > 0
-        ), "The value of `embedding_dimension` should be > 0"
-        assert (
-            num_parallel_samples > 0
-        ), "The value of `num_parallel_samples` should be > 0"
+        assert reconciliation_method in {"ols", "bottom_up"}
 
         self.prediction_length = prediction_length
-        self.context_length = (
-            context_length if context_length is not None else prediction_length
-        )
-        self.distr_output = distr_output
-        self.dropout_rate = dropout_rate
-        self.use_feat_dynamic_real = use_feat_dynamic_real
-        self.use_feat_static_cat = use_feat_static_cat
-        self.cardinality = cardinality if use_feat_static_cat else [1]
-        self.embedding_dimension = embedding_dimension
-        self.num_parallel_samples = num_parallel_samples
-        self.lags_seq = (
-            lags_seq
-            if lags_seq is not None
-            else get_lags_for_frequency(freq_str=freq)
-        )
+        self.context_length = context_length or prediction_length
+        self.S = S.astype("float32")
+        self.bottom_count = S.shape[1]
+        self.cardinality = cardinality
+
+        self.lags_seq = lags_seq or get_lags_for_frequency(freq)
         self.time_features = (
-            time_features
-            if time_features is not None
-            else time_features_from_frequency_str(freq)
+            time_features or time_features_from_frequency_str(freq)
         )
         self.history_length = self.context_length + max(self.lags_seq)
+
+        # encoder config
+        self.config = dict(
+            model_dim=model_dim,
+            dropout_rate=dropout_rate,
+            inner_ff_dim_scale=inner_ff_dim_scale,
+            num_heads=num_heads,
+            act_type="softrelu",
+            pre_seq="dn",
+            post_seq="drn",
+        )
+
+        self.encoder = AlternatingTransformerEncoder(
+            num_timesteps=self.context_length,
+            num_series=self.bottom_count,
+            config=self.config,
+        )
+        self.distr_output = distr_output
+        self.embedding_dimension = embedding_dimension
         self.scaling = scaling
+        self.reconciliation_method = reconciliation_method
+        self.num_parallel_samples = num_parallel_samples
+        self.coherent_train_samples = coherent_train_samples
 
-        self.config = {
-            "model_dim": model_dim,
-            "pre_seq": pre_seq,
-            "post_seq": post_seq,
-            "dropout_rate": dropout_rate,
-            "inner_ff_dim_scale": inner_ff_dim_scale,
-            "act_type": act_type,
-            "num_heads": num_heads,
-        }
-
-        self.encoder = TransformerEncoder(
-            self.context_length, self.config, prefix="enc_"
+        self.train_sampler = ExpectedNumInstanceSampler(
+            num_instances=1.0, min_future=prediction_length
         )
-        
-        self.decoder = TransformerDecoder(
-            self.prediction_length, self.config, prefix="dec_"
-        )
-        self.train_sampler = (
-            train_sampler
-            if train_sampler is not None
-            else ExpectedNumInstanceSampler(
-                num_instances=1.0, min_future=prediction_length
-            )
-        )
-        self.validation_sampler = (
-            validation_sampler
-            if validation_sampler is not None
-            else ValidationSplitSampler(min_future=prediction_length)
+        self.val_sampler = ValidationSplitSampler(
+            min_future=prediction_length
         )
 
-    def create_transformation(self) -> Transformation:
-        return SelectFields(
+    # ------------------------------------------------------------------ #
+    # transformation                                                     #
+    # ------------------------------------------------------------------ #
+    def create_transformation(self):
+        return Chain(
             [
-                FieldName.ITEM_ID,
-                FieldName.INFO,
-                FieldName.START,
-                FieldName.TARGET,
-            ],
-            allow_missing=True,
-        ) + AddObservedValuesIndicator(
-            target_field=FieldName.TARGET,
-            output_field=FieldName.OBSERVED_VALUES,
-            dtype=self.dtype,
-            imputation_method=DummyValueImputation(
-                self.distr_output.value_in_support
-            ),
+                RemoveFields(
+                    [FieldName.FEAT_DYNAMIC_CAT, FieldName.FEAT_STATIC_REAL]
+                ),
+                SetField(output_field=FieldName.FEAT_STATIC_CAT, value=[0.0]),
+                AsNumpyArray(field=FieldName.FEAT_STATIC_CAT, expected_ndim=1),
+                AsNumpyArray(field=FieldName.TARGET, expected_ndim=2),
+                AddObservedValuesIndicator(
+                    FieldName.TARGET, FieldName.OBSERVED_VALUES
+                ),
+                AddTimeFeatures(
+                    FieldName.START,
+                    FieldName.TARGET,
+                    FieldName.FEAT_TIME,
+                    self.time_features,
+                    self.prediction_length,
+                ),
+                AddAgeFeature(
+                    FieldName.TARGET,
+                    FieldName.FEAT_AGE,
+                    self.prediction_length,
+                    True,
+                ),
+            ]
         )
 
-    def _create_instance_splitter(self, mode: str) -> InstanceSplitter:
-        assert mode in ["training", "validation", "test"]
-        instance_sampler = {
-            "training": self.train_sampler,
-            "validation": self.validation_sampler,
-            "test": TestSplitSampler(),
-        }[mode]
+    # ------------------------------------------------------------------ #
+    # instance splitters & loaders                                        #
+    # ------------------------------------------------------------------ #
+    def _splitter(self, mode: str):
+        from gluonts.transform import InstanceSplitter
+
+        sampler = dict(
+            training=self.train_sampler,
+            validation=self.val_sampler,
+            test=TestSplitSampler(),
+        )[mode]
+
         return InstanceSplitter(
-            target_field=FieldName.TARGET,
-            is_pad_field=FieldName.IS_PAD,
-            start_field=FieldName.START,
-            forecast_start_field=FieldName.FORECAST_START,
-            instance_sampler=instance_sampler,
-            past_length=self.context_length,
-            future_length=self.prediction_length,
-            time_series_fields=[FieldName.OBSERVED_VALUES],
+            FieldName.TARGET,
+            FieldName.IS_PAD,
+            FieldName.START,
+            FieldName.FORECAST_START,
+            sampler,
+            self.history_length,
+            self.prediction_length,
+            [FieldName.FEAT_TIME, FieldName.OBSERVED_VALUES],
         )
 
-    def create_training_data_loader(
-        self, data: Dataset, **kwargs
-    ) -> DataLoader:
-        input_names = get_hybrid_forward_input_names(
-            AlternatingTransformerTrainingNetwork
-        )
-        instance_splitter = self._create_instance_splitter("training")
+    def create_training_data_loader(self, data, **kwargs):
+        names = get_hybrid_forward_input_names(AltHierTrainingNetwork)
         return TrainDataLoader(
             dataset=data,
-            transform=instance_splitter + SelectFields(input_names),
+            transform=self._splitter("training") + SelectFields(names),
             batch_size=self.batch_size,
-            stack_fn=partial(batchify, ctx=self.trainer.ctx, dtype=self.dtype),
+            stack_fn=lambda x: batchify(
+                x, ctx=self.trainer.ctx, dtype="float32"
+            ),
             **kwargs,
         )
 
-    def create_validation_data_loader(
-        self, data: Dataset, **kwargs
-    ) -> DataLoader:
-        input_names = get_hybrid_forward_input_names(
-            AlternatingTransformerTrainingNetwork
-        )
-        instance_splitter = self._create_instance_splitter("validation")
+    def create_validation_data_loader(self, data, **kwargs):
+        names = get_hybrid_forward_input_names(AltHierTrainingNetwork)
         return ValidationDataLoader(
             dataset=data,
-            transform=instance_splitter + SelectFields(input_names),
+            transform=self._splitter("validation") + SelectFields(names),
             batch_size=self.batch_size,
-            stack_fn=partial(batchify, ctx=self.trainer.ctx, dtype=self.dtype),
+            stack_fn=lambda x: batchify(
+                x, ctx=self.trainer.ctx, dtype="float32"
+            ),
         )
 
+    # ------------------------------------------------------------------ #
+    # networks                                                           #
+    # ------------------------------------------------------------------ #
     def create_training_network(self) -> HybridBlock:
-        base_net = AlternatingTransformerNetwork(
-            num_layers=self.num_layers,
-            num_series=self.num_series,
-            num_timesteps=self.context_length,
-            config=self.config,
-            debug=self.debug,
+        decoder = HierMLPDecoder(
+            bottom_count=self.bottom_count,
+            param_dim=self.distr_output.args_dim,
+            hidden=self.config["model_dim"] * 2,
+            dropout=self.config["dropout_rate"],
         )
-        if self.S is not None:
-            return AlternatingTransformerHierarchicalTrainingNetwork(
-                base_network=base_net,
-                prediction_length=self.prediction_length,
-                S=self.S,
-                loss=self.loss,
-                distr_output=self.distr_output,
-            )
-        return AlternatingTransformerTrainingNetwork(
-            base_network=base_net,
+        return AltHierTrainingNetwork(
+            decoder=decoder,
+            coherent_train_samples=self.coherent_train_samples,
+            encoder=self.encoder,
+            history_length=self.history_length,
+            context_length=self.context_length,
             prediction_length=self.prediction_length,
+            S=self.S,
             distr_output=self.distr_output,
+            cardinality=self.cardinality,
+            embedding_dimension=self.embedding_dimension,
+            lags_seq=self.lags_seq,
+            reconciliation_method=self.reconciliation_method,
+            scaling=self.scaling,
         )
 
     def create_predictor(
-        self, transformation: Transformation, trained_network: HybridBlock
-    ) -> Predictor:
-        base_net = AlternatingTransformerNetwork(
-            num_layers=self.num_layers,
-            num_series=self.num_series,
-            num_timesteps=self.context_length,
-            config=self.config,
-            debug=self.debug,
+        self, transformation, trained_network
+    ) -> RepresentableBlockPredictor:
+        pred_net = AltHierPredictionNetwork(
+            num_parallel_samples=self.num_parallel_samples,
+            encoder=self.encoder,
+            history_length=self.history_length,
+            context_length=self.context_length,
+            prediction_length=self.prediction_length,
+            S=self.S,
+            distr_output=self.distr_output,
+            cardinality=self.cardinality,
+            embedding_dimension=self.embedding_dimension,
+            lags_seq=self.lags_seq,
+            reconciliation_method=self.reconciliation_method,
+            scaling=self.scaling,
         )
-        if self.S is not None:
-            prediction_network = AlternatingTransformerHierarchicalPredictionNetwork(
-                base_network=base_net,
-                prediction_length=self.prediction_length,
-                S=self.S,
-                loss=self.loss,
-                distr_output=self.distr_output,
-                num_samples=self.num_parallel_samples,
-                params=trained_network.collect_params(),
-            )
-        else:
-            prediction_network = AlternatingTransformerPredictionNetwork(
-                base_network=base_net,
-                prediction_length=self.prediction_length,
-                distr_output=self.distr_output,
-                num_samples=self.num_parallel_samples,
-                params=trained_network.collect_params(),
-            )
-        prediction_splitter = self._create_instance_splitter("test")
+        copy_parameters(trained_network, pred_net)
+
         return RepresentableBlockPredictor(
-            input_transform=transformation + prediction_splitter,
-            prediction_net=prediction_network,
+            input_transform=transformation + self._splitter("test"),
+            prediction_net=pred_net,
             batch_size=self.batch_size,
             prediction_length=self.prediction_length,
-            forecast_generator=DistributionForecastGenerator(
-                self.distr_output
-            ),
             ctx=self.trainer.ctx,
         )
