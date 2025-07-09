@@ -64,32 +64,87 @@ class AlternatingTransformerEstimator(GluonEstimator):
         self,
         S: np.ndarray,
         prediction_length: int,
-        freq: str,
-        num_series: int,
-        num_layers: int = 2,
         context_length: Optional[int] = None,
         trainer: Trainer = Trainer(),
+        dropout_rate: float = 0.1,
+        freq: str,
+        num_series: int,
+        embedding_dimension: int = 20,
         distr_output: DistributionOutput = StudentTOutput(),
+        model_dim: int = 32,
+        inner_ff_dim_scale: int = 4,
+        pre_seq: str = "dn",
+        post_seq: str = "drn",
+        act_type: str = "softrelu",
+        num_heads: int = 8,
+        scaling: bool = True,
+        lags_seq: Optional[List[int]] = None,
+        time_features: Optional[List[TimeFeature]] = None,
+        use_feat_dynamic_real: bool = False,
+        use_feat_static_cat: bool = False,
         num_parallel_samples: int = 100,
         train_sampler: Optional[InstanceSampler] = None,
         validation_sampler: Optional[InstanceSampler] = None,
         batch_size: int = 32,
-        debug: bool = False,
-        loss: str = "mse",
     ) -> None:
         super().__init__(trainer=trainer, batch_size=batch_size)
+
+        assert (
+            prediction_length > 0
+        ), "The value of `prediction_length` should be > 0"
+        assert (
+            context_length is None or context_length > 0
+        ), "The value of `context_length` should be > 0"
+        assert dropout_rate >= 0, "The value of `dropout_rate` should be >= 0"
+
+        assert (
+            embedding_dimension > 0
+        ), "The value of `embedding_dimension` should be > 0"
+        assert (
+            num_parallel_samples > 0
+        ), "The value of `num_parallel_samples` should be > 0"
 
         self.prediction_length = prediction_length
         self.context_length = (
             context_length if context_length is not None else prediction_length
         )
-        self.num_series = num_series
-        self.num_layers = num_layers
         self.distr_output = distr_output
+        self.dropout_rate = dropout_rate
+        self.use_feat_dynamic_real = use_feat_dynamic_real
+        self.use_feat_static_cat = use_feat_static_cat
+        self.cardinality = cardinality if use_feat_static_cat else [1]
+        self.embedding_dimension = embedding_dimension
         self.num_parallel_samples = num_parallel_samples
-        self.debug = debug
-        self.S = S
-        self.loss = loss
+        self.lags_seq = (
+            lags_seq
+            if lags_seq is not None
+            else get_lags_for_frequency(freq_str=freq)
+        )
+        self.time_features = (
+            time_features
+            if time_features is not None
+            else time_features_from_frequency_str(freq)
+        )
+        self.history_length = self.context_length + max(self.lags_seq)
+        self.scaling = scaling
+
+        self.config = {
+            "model_dim": model_dim,
+            "pre_seq": pre_seq,
+            "post_seq": post_seq,
+            "dropout_rate": dropout_rate,
+            "inner_ff_dim_scale": inner_ff_dim_scale,
+            "act_type": act_type,
+            "num_heads": num_heads,
+        }
+
+        self.encoder = TransformerEncoder(
+            self.context_length, self.config, prefix="enc_"
+        )
+        
+        self.decoder = TransformerDecoder(
+            self.prediction_length, self.config, prefix="dec_"
+        )
         self.train_sampler = (
             train_sampler
             if train_sampler is not None
@@ -102,16 +157,6 @@ class AlternatingTransformerEstimator(GluonEstimator):
             if validation_sampler is not None
             else ValidationSplitSampler(min_future=prediction_length)
         )
-
-        self.config = {
-            "model_dim": 32,
-            "pre_seq": "dn",
-            "post_seq": "drn",
-            "dropout_rate": 0.1,
-            "inner_ff_dim_scale": 4,
-            "act_type": "softrelu",
-            "num_heads": 4,
-        }
 
     def create_transformation(self) -> Transformation:
         return SelectFields(
