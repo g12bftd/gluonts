@@ -137,6 +137,7 @@ class AlternatingTransformerEncoder(HybridBlock):
     # x expected shape: (B, T, S, d_model)
     # --------------------------------------------------------------------- #
     def hybrid_forward(self, F, data: Tensor) -> Tensor:
+        print(f"x shape: {x.shape}")
         x = self.input_layer(data)         # still (B,T,S,d)
         for layer in self.alt_layers:
             x = layer(x)
