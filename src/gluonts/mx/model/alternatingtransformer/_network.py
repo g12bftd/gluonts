@@ -203,11 +203,11 @@ class AltHierPredictionNetwork(AltHierNetworkBase):
         enc = self.encoder(x)
         bottom = self.decoder(enc) * scale                         # (B, BOTTOM, pred)
         B, BOTTOM, P = bottom.shape
-        R = mx.nd.array(self.R_np, ctx=bottom.context)             # (M, BOTTOM)
+        R = np.array(self.R_np, ctx=bottom.context)             # (M, BOTTOM)
 
         # reconcile per horizon step -----------------------------------------
         flat = bottom.transpose((0, 2, 1)).reshape((-1, BOTTOM))   # (B*P, BOTTOM)
-        all_nodes = mx.nd.dot(flat, R.T).reshape((B, P, -1))       # (B, P, M)
+        all_nodes = np.dot(flat, R.T).reshape((B, P, -1))       # (B, P, M)
         coherent = all_nodes.transpose((0, 2, 1))                  # (B, M, P)
 
         print("[Pred] coherent shape:", coherent.shape)
