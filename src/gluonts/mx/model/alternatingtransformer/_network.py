@@ -15,13 +15,64 @@ from gluonts.itertools import prod
 
 from .alternating_encoder import AlternatingTransformerEncoder
 
-# -----------------------------------------------------------------------------#
-# helpers                                                                       #
-# -----------------------------------------------------------------------------#
-def projection_matrix(S: np.ndarray) -> np.ndarray:
-    """OLS reconciliation matrix  P = S (Sᵀ S)⁻¹ Sᵀ ."""
-    St = S.T
-    return (S @ np.linalg.inv(St @ S) @ St).astype("float32")
+def reconcile_samples(
+    reconciliation_mat: Tensor,
+    samples: Tensor,
+    seq_axis: Optional[List] = None,
+) -> Tensor:
+    """
+    Computes coherent samples by multiplying unconstrained `samples` with
+    `reconciliation_mat`.
+
+    Parameters
+    ----------
+    reconciliation_mat
+        Shape: (target_dim, target_dim)
+    samples
+        Unconstrained samples
+        Shape: `(*batch_shape, target_dim)`
+        During training: (num_samples, batch_size, seq_len, target_dim)
+        During prediction: (num_parallel_samples x batch_size, seq_len,
+        target_dim)
+    seq_axis
+        Specifies the list of axes that should be reconciled sequentially.
+        By default, all axes are processeed in parallel.
+
+    Returns
+    -------
+    Tensor, shape same as that of `samples`
+        Coherent samples
+    """
+    if not seq_axis:
+        return mx.nd.dot(samples, reconciliation_mat, transpose_b=True)
+    else:
+        num_dims = len(samples.shape)
+
+        last_dim_in_seq_axis = num_dims - 1 in seq_axis or -1 in seq_axis
+        assert not last_dim_in_seq_axis, (
+            "The last dimension cannot be processed iteratively. Remove axis"
+            f" {num_dims - 1} (or -1) from `seq_axis`."
+        )
+
+        # In this case, reconcile samples by going over each index in
+        # `seq_axis` iteratively. Note that `seq_axis` can be more than one
+        # dimension.
+        num_seq_axes = len(seq_axis)
+
+        # bring the axes to iterate in the beginning
+        samples = mx.nd.moveaxis(samples, seq_axis, list(range(num_seq_axes)))
+
+        seq_axes_sizes = samples.shape[:num_seq_axes]
+        out = [
+            mx.nd.dot(samples[idx], reconciliation_mat, transpose_b=True)
+            # get the sequential index from the cross-product of their sizes.
+            for idx in product(*[range(size) for size in seq_axes_sizes])
+        ]
+
+        # put the axis in the correct order again
+        out = mx.nd.concat(*out, dim=0).reshape(samples.shape)
+        out = mx.nd.moveaxis(out, list(range(len(seq_axis))), seq_axis)
+        return out
 
 # simple dense decoder ---------------------------------------------------------#
 class HierMLPDecoder(HybridBlock):
