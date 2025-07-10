@@ -9,6 +9,7 @@ Training / prediction networks that
 from typing import List, Tuple, Optional
 
 import mxnet as mx
+import numpy as np
 from mxnet import gluon
 from mxnet.gluon import HybridBlock, nn
 from gluonts.mx.util import assert_shape
@@ -106,8 +107,8 @@ class _BaseAltHierNetwork(HybridBlock):
         encoder: AlternatingHierEncoder,
         decoder: TransformerDecoder,
         proj: nn.HybridBlock,
-        M: np.NDArray,
-        S: np.NDArray,
+        M: np.ndarray,
+        S: np.ndarray,
         num_parallel_samples: int = 100,
         cardinality: Optional[List[int]] = None,
         embedding_dim: int = 20,
