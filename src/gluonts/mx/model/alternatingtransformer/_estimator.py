@@ -11,7 +11,7 @@ from gluonts.mx.trainer import Trainer
 from gluonts.mx.model.transformer._estimator import TransformerEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
 from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
-from gluonts.mx.model.transformer.layers import TransformerDecoder
+from gluonts.mx.model.transformer.trans_decoder import TransformerDecoder
 from mxnet.gluon import nn
 
 from .transencoder_alt import AlternatingHierEncoder
