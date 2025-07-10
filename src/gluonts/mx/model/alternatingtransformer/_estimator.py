@@ -6,6 +6,7 @@ and reuses DeepVAR-Hierarchical reconciliation utilities.
 from typing import List, Optional
 
 import mxnet as mx
+import numpy as np
 from gluonts.core.component import validated
 from gluonts.mx.trainer import Trainer
 from gluonts.mx.model.transformer._estimator import TransformerEstimator
