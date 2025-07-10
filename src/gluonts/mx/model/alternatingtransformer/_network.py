@@ -20,7 +20,6 @@ from gluonts.mx.model.deepvar_hierarchical._network import (
     reconcile_samples,
     coherency_error,
 )
-from gluonts.mx.model.transformer._network import get_lagged_subsequences
 from .transencoder_alt import AlternatingHierEncoder
 
 __all__: List[str] = [
@@ -36,6 +35,57 @@ def _dense_flatten_last(in_units: int, out_units: int) -> nn.Dense:
     Dense layer that keeps *all* axes except the last untouched.
     """
     return nn.Dense(units=out_units, flatten=False, in_units=in_units)
+
+@staticmethod
+def get_lagged_subsequences(
+    F,
+    sequence: Tensor,
+    sequence_length: int,
+    indices: List[int],
+    subsequences_length: int = 1,
+) -> Tensor:
+    """
+    Returns lagged subsequences of a given sequence.
+
+    Parameters
+    ----------
+    sequence : Tensor
+        the sequence from which lagged subsequences should be extracted.
+        Shape: (N, T, C).
+    sequence_length : int
+        length of sequence in the T (time) dimension (axis = 1).
+    indices : List[int]
+        list of lag indices to be used.
+    subsequences_length : int
+        length of the subsequences to be extracted.
+
+    Returns
+    --------
+    lagged : Tensor
+        a tensor of shape (N, S, C, I), where S = subsequences_length and
+        I = len(indices), containing lagged subsequences. Specifically,
+        lagged[i, j, :, k] = sequence[i, -indices[k]-S+j, :].
+    """
+    # we must have: sequence_length - lag_index - subsequences_length >= 0
+    # for all lag_index, hence the following assert
+    assert max(indices) + subsequences_length <= sequence_length, (
+        "lags cannot go further than history length, found lag"
+        f" {max(indices)} while history length is only {sequence_length}"
+    )
+    assert all(lag_index >= 0 for lag_index in indices)
+
+    lagged_values = []
+    for lag_index in indices:
+        begin_index = -lag_index - subsequences_length
+        end_index = -lag_index if lag_index > 0 else None
+        lagged_values.append(
+            F.slice_axis(
+                sequence, axis=1, begin=begin_index, end=end_index
+            )
+        )
+
+    return F.stack(*lagged_values, axis=-1)
+
 
 # ----------------------------------------------------------------------
 # common base
