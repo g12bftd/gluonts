@@ -13,7 +13,6 @@ from mxnet import gluon
 from mxnet.gluon import HybridBlock, nn
 from gluonts.mx.util import assert_shape
 from gluonts.mx import Tensor
-from gluonts.mx.model.transformer.layers import _make_causal_mask
 from gluonts.mx.model.transformer.trans_decoder import TransformerDecoder 
 
 from gluonts.mx.distribution import StudentT, EmpiricalDistribution
@@ -223,10 +222,10 @@ class AltHierTransformerTrainingNetwork(_BaseAltHierNetwork):
         enc_output = self.encoder(enc_input)
 
         # 3) Decoder  (flatten series)
-        dec_output, _ = self.decoder(
+        dec_output = self.decoder(
             dec_input,
-            enc_output.reshape((-1, enc_output.shape[1], self.model_dim)),
-            _make_causal_mask(F, dec_input, past_valid_length=self.context_length),
+            enc_out,
+            self.upper_triangular_mask(F, self.prediction_length),
         )
 
         # 4) Distribution head
