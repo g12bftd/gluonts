@@ -53,7 +53,7 @@ class AlternatingHierarchicalTransformerEstimator(TransformerEstimator):
         ), "encoder_layers must be even for alternating attention"
 
         self.S = np.array(S, ctx=trainer.ctx)
-        self.M = np.array(projection_mat(S, D), ctx=trainer.ctx)
+        self.M = mx.nd.array(projection_mat(S, D), ctx=trainer.ctx)
         self.num_series = S.shape[0]
 
         # build encoder / decoder / projection head
