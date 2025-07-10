@@ -20,10 +20,7 @@ from gluonts.mx.model.deepvar_hierarchical._network import (
     reconcile_samples,
     coherency_error,
 )
-from gluonts.mx.model.transformer._network import (
-    _get_lagged_subsequences,
-    _add_time_features,
-)
+from gluonts.mx.model.transformer._network import get_lagged_subsequences
 from .transencoder_alt import AlternatingHierEncoder
 
 __all__: List[str] = [
@@ -129,18 +126,9 @@ class _BaseAltHierNetwork(HybridBlock):
             F,
             sequence=full_target,
             sequence_length=full_target.shape[1],
-            lags_seq=self.lags_seq,
-            subseq_length=L,
+            indices=self.lags_seq,
+            subsequences_length=L,
         ).transpose((0, 2, 3, 1))  # B, L, D, Lags
-
-        # -------- 2) dynamic time features ---------------------------
-        time_feat = _add_time_features(
-            F,
-            past_time_feat=past_time_feat,
-            future_time_feat=future_time_feat,
-            seq_len=L,
-            broadcast_axis=2,  # broadcast across D
-        )  # (B, L, D, F_t)
 
         # -------- 3) static features --------------------------------
         if static_feat is not None:
