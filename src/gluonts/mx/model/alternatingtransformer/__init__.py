@@ -17,12 +17,16 @@
 # Relative imports
 from ._estimator import (
     projection_mat,
-    AlternatingTransformerHierarchicalEstimator,
+    AlternatingHierarchicalTransformerEstimator,
 )
-from ._network import reconcile_samples, coherency_error
+from gluonts.mx.model.deepvar_hierarchical._network import (
+    reconcile_samples,
+    coherency_error
+)
+from  gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
 
 __all__ = [
-    "AlternatingTransformerHierarchicalEstimator",
+    "AlternatingHierarchicalTransformerEstimator",
     "projection_mat",
     "reconcile_samples",
     "coherency_error",
