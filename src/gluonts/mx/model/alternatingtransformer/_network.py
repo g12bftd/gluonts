@@ -108,6 +108,179 @@ def coherency_error(S: np.ndarray, samples: np.ndarray) -> float:
     )
     return rel_errs.max()
 
+
+class AlternatingTransformerHierarchicalNetwork(AlternatingTransformerNetwork):
+    @validated()
+    def __init__(
+        self,
+        M,
+        S,
+        num_layers: int,
+        num_cells: int,
+        cell_type: str,
+        history_length: int,
+        context_length: int,
+        prediction_length: int,
+        distr_output: DistributionOutput,
+        dropout_rate: float,
+        lags_seq: List[int],
+        target_dim: int,
+        cardinality: List[int] = [1],
+        embedding_dimension: int = 1,
+        scaling: bool = True,
+        seq_axis: Optional[List[int]] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            num_layers=num_layers,
+            num_cells=num_cells,
+            cell_type=cell_type,
+            history_length=history_length,
+            context_length=context_length,
+            prediction_length=prediction_length,
+            distr_output=distr_output,
+            dropout_rate=dropout_rate,
+            lags_seq=lags_seq,
+            target_dim=target_dim,
+            cardinality=cardinality,
+            embedding_dimension=embedding_dimension,
+            scaling=scaling,
+            **kwargs,
+        )
+
+        self.M = M
+        self.S = S
+        self.seq_axis = seq_axis
+
+    def get_samples_for_loss(self, distr: Distribution) -> Tensor:
+        """
+        Get samples to compute the final loss. These are samples directly drawn
+        from the given `distr` if coherence is not enforced yet; otherwise the
+        drawn samples are reconciled.
+
+        Parameters
+        ----------
+        distr
+            Distribution instances
+
+        Returns
+        -------
+        samples
+            Tensor with shape (num_samples, batch_size, seq_len, target_dim)
+        """
+        samples = distr.sample_rep(
+            num_samples=self.num_samples_for_loss, dtype="float32"
+        )
+
+        # Determine which epoch we are currently in.
+        self.batch_no += 1
+        epoch_no = self.batch_no // self.num_batches_per_epoch + 1
+        epoch_frac = epoch_no / self.epochs
+
+        if (
+            self.coherent_train_samples
+            and epoch_frac > self.warmstart_epoch_frac
+        ):
+            coherent_samples = reconcile_samples(
+                reconciliation_mat=self.M,
+                samples=samples,
+                seq_axis=self.seq_axis,
+            )
+            assert_shape(coherent_samples, samples.shape)
+            return coherent_samples
+        else:
+            return samples
+
+    def loss(self, F, target: Tensor, distr: Distribution) -> Tensor:
+        """
+        Computes loss given the output of the network in the form of
+        distribution. The loss is given by:
+
+            `self.CRPS_weight` * `loss_CRPS` + `self.likelihood_weight` *
+            `neg_likelihoods`,
+
+         where
+          * `loss_CRPS` is computed on the samples drawn from the predicted
+            `distr` (optionally after reconciling them),
+          * `neg_likelihoods` are either computed directly using the predicted
+            `distr` or from the estimated distribution based on (coherent)
+            samples, depending on the `sample_LH` flag.
+
+        Parameters
+        ----------
+        F
+        target
+            Tensor with shape (batch_size, seq_len, target_dim)
+        distr
+            Distribution instances
+
+        Returns
+        -------
+        Loss
+            Tensor with shape (batch_size, seq_length, 1)
+        """
+
+        # Sample from the predicted distribution if we are computing CRPS loss
+        # or likelihood using the distribution based on (coherent) samples.
+        # Samples shape: (num_samples, batch_size, seq_len, target_dim)
+        if self.sample_LH or (self.CRPS_weight > 0.0):
+            samples = self.get_samples_for_loss(distr=distr)
+
+        if self.sample_LH:
+            # Estimate the distribution based on (coherent) samples.
+            distr = LowrankMultivariateGaussian.fit(F, samples=samples, rank=0)
+
+        neg_likelihoods = -distr.log_prob(target).expand_dims(axis=-1)
+
+        loss_CRPS = F.zeros_like(neg_likelihoods)
+        if self.CRPS_weight > 0.0:
+            loss_CRPS = (
+                EmpiricalDistribution(samples=samples, event_dim=1)
+                .crps_univariate(x=target)
+                .expand_dims(axis=-1)
+            )
+
+        return (
+            self.CRPS_weight * loss_CRPS
+            + self.likelihood_weight * neg_likelihoods
+        )
+
+    def post_process_samples(self, samples: Tensor) -> Tensor:
+        """
+        Reconcile samples if `coherent_pred_samples` is True.
+
+        Parameters
+        ----------
+        samples
+            Tensor of shape (num_parallel_samples*batch_size, 1, target_dim)
+
+        Returns
+        -------
+            Tensor of coherent samples.
+        """
+        if not self.coherent_pred_samples:
+            samples_to_return = samples
+        else:
+            samples_to_return = reconcile_samples(
+                reconciliation_mat=self.M,
+                samples=samples,
+                seq_axis=self.seq_axis,
+            )
+            assert_shape(samples_to_return, samples.shape)
+
+        # Show coherency error: A*X_proj
+        if self.log_coherency_error:
+            coh_error = coherency_error(
+                S=self.S, samples=samples_to_return.asnumpy()
+            )
+            logger.info(
+                "Coherency error of the predicted samples for time step"
+                f" {self.forecast_time_step}: {coh_error}"
+            )
+            self.forecast_time_step += 1
+
+        return samples_to_return
+
 # simple dense decoder ---------------------------------------------------------#
 class HierMLPDecoder(HybridBlock):
     """
