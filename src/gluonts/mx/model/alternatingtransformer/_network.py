@@ -14,11 +14,7 @@ from gluonts.mx.distribution import LowrankMultivariateGaussian
 from gluonts.mx.block.feature import FeatureEmbedder
 
 #TODO: add AlternatingTransformerNetwork, AlternatingTransformerTrainingNetwork, AlternatingTransformerPredictNetwork
-from gluonts.mx.model.deepvar._network import (
-    DeepVARNetwork,
-    DeepVARTrainingNetwork,
-    DeepVARPredictionNetwork,
-)
+
 
 
 logger = logging.getLogger(__name__)
