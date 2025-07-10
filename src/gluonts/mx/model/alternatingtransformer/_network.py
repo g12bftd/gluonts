@@ -151,6 +151,9 @@ class _BaseAltHierNetwork(HybridBlock):
         enc_out_shape = (B, L, D, self.model_dim)
         dec_input = token_emb.reshape((-1, L, self.model_dim))
 
+        print(f"Encoder tokens shape: {token_emb.shape}")
+        print(f"Decoder input shape: {dec_input.shape}")
+
         return token_emb, dec_input, scale
 
     # ------------------------------------------------------------------
