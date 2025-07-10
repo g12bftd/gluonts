@@ -1,205 +1,150 @@
-# -----------------------------------------------------------------------------#
-# Estimator – deterministic, coherence-aware Transformer                       #
-# -----------------------------------------------------------------------------#
+# gluonts/mx/model/alt_hier_transformer/_estimator.py
+"""
+Public estimator that plugs the alternating encoder into GluonTS
+and reuses DeepVAR-Hierarchical reconciliation utilities.
+"""
 from typing import List, Optional
 
-import numpy as np
-from mxnet.gluon import HybridBlock
+import mxnet as mx
 from gluonts.core.component import validated
-from gluonts.dataset.field_names import FieldName
-from gluonts.transform import (
-    AddAgeFeature,
-    AddObservedValuesIndicator,
-    AddTimeFeatures,
-    AsNumpyArray,
-    Chain,
-    RemoveFields,
-    SetField,
-    SelectFields,
-)
-from gluonts.transform.sampler import (
-    ExpectedNumInstanceSampler,
-    ValidationSplitSampler,
-    TestSplitSampler,
-)
-from gluonts.time_feature import get_lags_for_frequency, time_features_from_frequency_str
 from gluonts.mx.trainer import Trainer
-from gluonts.dataset.loader import TrainDataLoader, ValidationDataLoader
-from gluonts.mx.batchify import batchify
-from gluonts.mx.model.estimator import GluonEstimator
-from gluonts.mx.util import copy_parameters, get_hybrid_forward_input_names
+from gluonts.mx.model.transformer._estimator import TransformerEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
+from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
+from gluonts.mx.model.transformer.layers import TransformerDecoder
+from mxnet.gluon import nn
 
-from .alternating_encoder import AlternatingTransformerEncoder
+from .transencoder_alt import AlternatingHierEncoder
 from ._network import (
-    HierMLPDecoder,
-    AltHierTrainingNetwork,
-    AltHierPredictionNetwork,
+    AltHierTransformerTrainingNetwork,
+    AltHierTransformerPredictionNetwork,
 )
 
-# -----------------------------------------------------------------------------#
-class AltTransformerHierarchicalEstimator(GluonEstimator):
+
+class AlternatingHierarchicalTransformerEstimator(TransformerEstimator):
     """
-    Encoder depth controlled by `num_layers`.
-    MLP decoder outputs deterministic bottom-level forecasts; these are
-    reconciled to coherent forecasts inside the networks.
+    Transformer with alternating spatial / temporal encoder
+    and DeepVAR-Hierarchical coherence.
     """
 
     @validated()
     def __init__(
         self,
-        freq: str,
-        prediction_length: int,
-        S: np.ndarray,                    # (M × B)
-        cardinality: List[int],
-        *,
-        num_layers: int = 4,
-        embedding_dimension: int = 20,
-        context_length: Optional[int] = None,
-        trainer: Trainer = Trainer(),
-        dropout_rate: float = 0.1,
+        S,                          # (D_total, D_bottom) hierarchy matrix
+        D: Optional = None,         # If you use weights
+        encoder_layers: int = 6,
         model_dim: int = 32,
-        inner_ff_dim_scale: int = 4,
         num_heads: int = 8,
-        scaling: bool = True,
-        lags_seq: Optional[List[int]] = None,
-        time_features: Optional[List] = None,
-        reconciliation_method: str = "ols",
-        batch_size: int = 32,
+        inner_ff_dim_scale: int = 4,
+        dropout_rate: float = 0.1,
+        act_type: str = "gelu",
+        pre_seq: str = "dn",
+        post_seq: str = "drn",
+        num_samples_for_loss: int = 200,
+        likelihood_weight: float = 0.0,
+        CRPS_weight: float = 1.0,
+        coherent_pred_samples: bool = True,
+        trainer: Trainer = Trainer(),
+        **kwargs,
     ):
-        super().__init__(trainer=trainer, batch_size=batch_size)
+        assert (
+            encoder_layers % 2 == 0
+        ), "encoder_layers must be even for alternating attention"
 
-        self.pred_len = prediction_length
-        self.context_len = context_length or prediction_length
-        self.S = S.astype("float32")
-        self.bottom = S.shape[1]
-        self.cardinality = cardinality
+        self.S = mx.nd.array(S, ctx=trainer.ctx)
+        self.M = mx.nd.array(projection_mat(S, D), ctx=trainer.ctx)
+        self.num_series = S.shape[0]
 
-        self.lags_seq = lags_seq or get_lags_for_frequency(freq)
-        self.t_feat = time_features or time_features_from_frequency_str(freq)
-        self.hist_len = self.context_len + max(self.lags_seq)
-
-        cfg = dict(
+        # build encoder / decoder / projection head
+        encoder = AlternatingHierEncoder(
+            num_layers=encoder_layers,
             model_dim=model_dim,
-            dropout_rate=dropout_rate,
-            inner_ff_dim_scale=inner_ff_dim_scale,
             num_heads=num_heads,
-            num_layers=num_layers,
-            pre_seq="dn",
-            post_seq="drn",
-            act_type="softrelu",
+            inner_ff_dim_scale=inner_ff_dim_scale,
+            dropout_rate=dropout_rate,
+            act_type=act_type,
+            pre_seq=pre_seq,
+            post_seq=post_seq,
         )
-        self.encoder = AlternatingTransformerEncoder(
-            num_timesteps=self.context_len, num_series=self.bottom, config=cfg
+        decoder = TransformerDecoder(
+            model_dim=model_dim,
+            num_heads=num_heads,
+            inner_ff_dim_scale=inner_ff_dim_scale,
+            dropout_rate=dropout_rate,
+            act_type=act_type,
+            pre_seq=pre_seq,
+            post_seq=post_seq,
         )
+        proj_head = nn.Dense(
+            units=3, flatten=False, in_units=model_dim
+        )  # Student-T μ, σ, ν
 
-        self.embedding_dimension = embedding_dimension
-        self.scaling = scaling
-        self.recon_method = reconciliation_method
-
-        self.train_sampler = ExpectedNumInstanceSampler(1.0, min_future=prediction_length)
-        self.val_sampler = ValidationSplitSampler(min_future=prediction_length)
-
-    # transformation -----------------------------------------------------------
-    def create_transformation(self):
-        return Chain(
-            [
-                RemoveFields([FieldName.FEAT_DYNAMIC_CAT, FieldName.FEAT_STATIC_REAL]),
-                SetField(output_field=FieldName.FEAT_STATIC_CAT, value=[0.0]),
-                AsNumpyArray(field=FieldName.FEAT_STATIC_CAT, expected_ndim=1),
-                AsNumpyArray(field=FieldName.TARGET, expected_ndim=2),
-                AddObservedValuesIndicator(FieldName.TARGET, FieldName.OBSERVED_VALUES),
-                AddTimeFeatures(
-                    FieldName.START,
-                    FieldName.TARGET,
-                    FieldName.FEAT_TIME,
-                    self.t_feat,
-                    self.pred_len,
-                ),
-                AddAgeFeature(FieldName.TARGET, FieldName.FEAT_AGE, self.pred_len, True),
-            ]
+        super().__init__(
+            model_dim=model_dim,
+            num_heads=num_heads,
+            inner_ff_dim_scale=inner_ff_dim_scale,
+            dropout_rate=dropout_rate,
+            act_type=act_type,
+            trainer=trainer,
+            **kwargs,
         )
 
-    # instance splitter --------------------------------------------------------
-    def _splitter(self, mode: str):
-        from gluonts.transform import InstanceSplitter
+        # store modules
+        self.encoder = encoder
+        self.decoder = decoder
+        self.proj_head = proj_head
 
-        sampler = dict(
-            training=self.train_sampler,
-            validation=self.val_sampler,
-            test=TestSplitSampler(),
-        )[mode]
-        return InstanceSplitter(
-            FieldName.TARGET,
-            FieldName.IS_PAD,
-            FieldName.START,
-            FieldName.FORECAST_START,
-            sampler,
-            self.hist_len,
-            self.pred_len,
-            [FieldName.FEAT_TIME, FieldName.OBSERVED_VALUES],
-        )
+        # loss / pred settings
+        self.num_samples_for_loss = num_samples_for_loss
+        self.likelihood_weight = likelihood_weight
+        self.CRPS_weight = CRPS_weight
+        self.coherent_pred_samples = coherent_pred_samples
 
-    # data loaders -------------------------------------------------------------
-    def _loader(self, net, data, mode: str):
-        names = get_hybrid_forward_input_names(net)
-        return (TrainDataLoader if mode == "training" else ValidationDataLoader)(
-            dataset=data,
-            transform=self._splitter(mode) + SelectFields(names),
-            batch_size=self.batch_size,
-            stack_fn=lambda b: batchify(b, ctx=self.trainer.ctx, dtype="float32"),
-        )
-
-    def create_training_data_loader(self, data, **kw):
-        return self._loader(AltHierTrainingNetwork, data, "training")
-
-    def create_validation_data_loader(self, data, **kw):
-        return self._loader(AltHierTrainingNetwork, data, "validation")
-
-    # networks -----------------------------------------------------------------
-    def _make_decoder(self):
-        return HierMLPDecoder(
-            bottom_count=self.bottom,
-            pred_len=self.pred_len,
-            hidden=self.encoder.config["model_dim"] * 2,
-            dropout=self.encoder.config["dropout_rate"],
-        )
-
-    def create_training_network(self) -> HybridBlock:
-        return AltHierTrainingNetwork(
-            decoder=self._make_decoder(),
-            encoder=self.encoder,
-            history_length=self.hist_len,
-            context_length=self.context_len,
-            prediction_length=self.pred_len,
-            S=self.S,
-            cardinality=self.cardinality,
-            embedding_dimension=self.embedding_dimension,
+    # ------------------------------------------------------------------
+    #  overrides
+    # ------------------------------------------------------------------
+    def create_training_network(self) -> AltHierTransformerTrainingNetwork:
+        return AltHierTransformerTrainingNetwork(
+            context_length=self.context_length,
+            prediction_length=self.prediction_length,
+            freq=self.freq,
             lags_seq=self.lags_seq,
-            reconciliation_method=self.recon_method,
-            scaling=self.scaling,
-        )
-
-    def create_predictor(self, transformation, trained_network) -> RepresentableBlockPredictor:
-        pred_net = AltHierPredictionNetwork(
-            decoder=self._make_decoder(),
+            num_series=self.num_series,
+            model_dim=self.model_dim,
             encoder=self.encoder,
-            history_length=self.hist_len,
-            context_length=self.context_len,
-            prediction_length=self.pred_len,
+            decoder=self.decoder,
+            proj=self.proj_head,
+            M=self.M,
             S=self.S,
+            num_samples_for_loss=self.num_samples_for_loss,
+            likelihood_weight=self.likelihood_weight,
+            CRPS_weight=self.CRPS_weight,
             cardinality=self.cardinality,
-            embedding_dimension=self.embedding_dimension,
-            lags_seq=self.lags_seq,
-            reconciliation_method=self.recon_method,
-            scaling=self.scaling,
         )
-        copy_parameters(trained_network, pred_net)
 
+    def create_predictor(
+        self, transformation, trained_network
+    ) -> RepresentableBlockPredictor:
+        pred_net = AltHierTransformerPredictionNetwork(
+            context_length=self.context_length,
+            prediction_length=self.prediction_length,
+            freq=self.freq,
+            lags_seq=self.lags_seq,
+            num_series=self.num_series,
+            model_dim=self.model_dim,
+            encoder=self.encoder,
+            decoder=self.decoder,
+            proj=self.proj_head,
+            M=self.M,
+            S=self.S,
+            coherent_pred_samples=self.coherent_pred_samples,
+            cardinality=self.cardinality,
+        )
+        self.copy_parameters(trained_network, pred_net)
         return RepresentableBlockPredictor(
-            input_transform=transformation + self._splitter("test"),
+            input_transform=transformation + self._create_instance_splitter("test"),
             prediction_net=pred_net,
             batch_size=self.batch_size,
-            prediction_length=self.pred_len,
+            prediction_length=self.prediction_length,
             ctx=self.trainer.ctx,
         )
