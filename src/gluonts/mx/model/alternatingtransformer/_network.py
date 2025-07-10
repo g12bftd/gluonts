@@ -44,7 +44,7 @@ def reconcile_samples(
         Coherent samples
     """
     if not seq_axis:
-        return mx.nd.dot(samples, reconciliation_mat, transpose_b=True)
+        return np.dot(samples, reconciliation_mat, transpose_b=True)
     else:
         num_dims = len(samples.shape)
 
@@ -60,19 +60,53 @@ def reconcile_samples(
         num_seq_axes = len(seq_axis)
 
         # bring the axes to iterate in the beginning
-        samples = mx.nd.moveaxis(samples, seq_axis, list(range(num_seq_axes)))
+        samples = np.moveaxis(samples, seq_axis, list(range(num_seq_axes)))
 
         seq_axes_sizes = samples.shape[:num_seq_axes]
         out = [
-            mx.nd.dot(samples[idx], reconciliation_mat, transpose_b=True)
+            np.dot(samples[idx], reconciliation_mat, transpose_b=True)
             # get the sequential index from the cross-product of their sizes.
             for idx in product(*[range(size) for size in seq_axes_sizes])
         ]
 
         # put the axis in the correct order again
-        out = mx.nd.concat(*out, dim=0).reshape(samples.shape)
-        out = mx.nd.moveaxis(out, list(range(len(seq_axis))), seq_axis)
+        out = np.concat(*out, dim=0).reshape(samples.shape)
+        out = np.moveaxis(out, list(range(len(seq_axis))), seq_axis)
         return out
+
+def coherency_error(S: np.ndarray, samples: np.ndarray) -> float:
+    r"""
+    Computes the maximum relative coherency error.
+
+    .. math::
+
+                \max_i | (S @ y_b)_i - y_i | / y_i
+
+    where :math:`y` refers to the `samples` and :math:`y_b` refers to the
+    samples at the bottom level.
+
+    Parameters
+    ----------
+    S
+        The summation matrix S. Shape:
+        (total_num_time_series, num_bottom_time_series)
+    samples
+        Samples. Shape: `(*batch_shape, target_dim)`.
+
+    Returns
+    -------
+    Float
+        Coherency error
+    """
+    samples_bottom_level = samples[..., -S.shape[1] :]
+
+    errs = np.abs(samples_bottom_level @ S.T - samples)
+    rel_errs = np.where(
+        samples == 0.0,
+        errs,
+        errs / np.abs(samples),
+    )
+    return rel_errs.max()
 
 # simple dense decoder ---------------------------------------------------------#
 class HierMLPDecoder(HybridBlock):
