@@ -13,6 +13,17 @@
 
 """Alternating Transformer model components."""
 
-from ._estimator import AlternatingTransformerEstimator
 
-__all__ = ["AlternatingTransformerEstimator"]
+# Relative imports
+from ._estimator import (
+    projection_mat,
+    AlternatingTransformerHierarchicalEstimator,
+)
+from ._network import reconcile_samples, coherency_error
+
+__all__ = [
+    "AlternatingTransformerHierarchicalEstimator",
+    "projection_mat",
+    "reconcile_samples",
+    "coherency_error",
+]
