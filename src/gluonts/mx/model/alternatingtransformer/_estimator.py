@@ -31,7 +31,7 @@ class AlternatingHierarchicalTransformerEstimator(TransformerEstimator):
     def __init__(
         self,
         S,                          # (D_total, D_bottom) hierarchy matrix
-        D: Optional = None,         # If you use weights
+        D: Optional[np.ndarray] = None,         # If you use weights
         encoder_layers: int = 6,
         model_dim: int = 32,
         num_heads: int = 8,
@@ -51,8 +51,8 @@ class AlternatingHierarchicalTransformerEstimator(TransformerEstimator):
             encoder_layers % 2 == 0
         ), "encoder_layers must be even for alternating attention"
 
-        self.S = mx.nd.array(S, ctx=trainer.ctx)
-        self.M = mx.nd.array(projection_mat(S, D), ctx=trainer.ctx)
+        self.S = np.array(S, ctx=trainer.ctx)
+        self.M = np.array(projection_mat(S, D), ctx=trainer.ctx)
         self.num_series = S.shape[0]
 
         # build encoder / decoder / projection head
