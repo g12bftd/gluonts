@@ -14,7 +14,7 @@ from mxnet.gluon import HybridBlock, nn
 from gluonts.mx.util import assert_shape
 from gluonts.mx import Tensor
 from gluonts.mx.model.transformer.layers import _make_causal_mask
-from gluonts.mx.model.transformer.trans_decoder impot TransformerDecoder 
+from gluonts.mx.model.transformer.trans_decoder import TransformerDecoder 
 
 from gluonts.mx.distribution import StudentT, EmpiricalDistribution
 from gluonts.mx.model.deepvar_hierarchical._network import (
