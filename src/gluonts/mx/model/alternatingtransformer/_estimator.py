@@ -27,6 +27,7 @@ from gluonts.dataset.loader import (
 from gluonts.model.predictor import Predictor
 from gluonts.mx.batchify import batchify
 from gluonts.mx.distribution import DistributionOutput, StudentTOutput
+from gluonts.mx.distribution.multivariate_gaussian import LowrankMultivariateGaussianOutput
 from gluonts.mx.model.estimator import GluonEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
 from gluonts.mx.trainer import Trainer
@@ -136,13 +137,14 @@ class AlternatingTransformerEstimator(GluonEstimator):
         self,
         freq: str,
         prediction_length: int,
+        num_series: int = 1, 
         num_layers: int = 2,
         context_length: Optional[int] = None,
         trainer: Trainer = Trainer(),
         dropout_rate: float = 0.1,
         cardinality: Optional[List[int]] = None,
         embedding_dimension: int = 20,
-        distr_output: DistributionOutput = StudentTOutput(),
+        distr_output: Optional[DistributionOutput] =  None,
         model_dim: int = 32,
         inner_ff_dim_scale: int = 4,
         pre_seq: str = "dn",
@@ -208,10 +210,16 @@ class AlternatingTransformerEstimator(GluonEstimator):
         )
         self.history_length = self.context_length + max(self.lags_seq)
         self.scaling = scaling
+        self.distr_output = (
+            distr_output
+            if distr_output is not None
+            else LowrankMultivariateGaussianOutput(dim=num_series, rank=0)
+        )
 
         self.config = {
             "model_dim": model_dim,
             "num_layers": num_layers,
+            "num_series": num_series,
             "pre_seq": pre_seq,
             "post_seq": post_seq,
             "dropout_rate": dropout_rate,
