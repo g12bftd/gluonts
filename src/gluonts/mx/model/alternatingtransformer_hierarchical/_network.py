@@ -1,6 +1,5 @@
 
-# src/gluonts/mx/model/alternating_transformer_hierarchical/_network.py
-from typing: List, Optional
+from typing import List, Optional
 
 import numpy as np
 
