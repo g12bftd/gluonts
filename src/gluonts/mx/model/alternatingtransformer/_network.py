@@ -294,18 +294,40 @@ class TransformerTrainingNetwork(TransformerNetwork):
             self.upper_triangular_mask(F, self.prediction_length),
         )
 
+        target = F.concat(
+            past_target_cdf.slice_axis(
+                axis=1, begin=-self.context_length, end=None
+            ),
+            future_target_cdf,
+            dim=1,
+        )
+
         # compute loss
         distr_args = self.proj_dist_args(dec_output)
         distr      = self.distr_output.distribution(distr_args, scale=scale)
         
         # (1) joint negative log-likelihood, keep a trailing axis for broadcasting
-        loss = -distr.log_prob(future_target).expand_dims(axis=-1)   # (B, T, 1)
-        
-        # (2) collapse the 3-D mask so it lines up with (B, T, 1)
-        obs_mask = future_observed_values.min(axis=-1, keepdims=True)  # (B, T, 1)
-        
+        loss = -distr.log_prob(target).expand_dims(axis=-1)   # (B, T, 1)
+
+
+        past_observed_values = F.broadcast_minimum(
+            past_observed_values, 1 - past_is_pad.expand_dims(axis=-1)
+        )
+
+        # (batch_size, subseq_length, target_dim)
+        observed_values = F.concat(
+            past_observed_values.slice_axis(
+                axis=1, begin=-self.context_length, end=None
+            ),
+            future_observed_values,
+            dim=1,
+        )
+
+        loss_weights = observed_values.min(axis=-1, keepdims=True)
+
         weighted_loss = weighted_average(
-            F=F, x=loss, weights=obs_mask, axis=1)
+            F=F, x=loss, weights=loss_weights, axis=1
+        )
         
         return weighted_loss.mean()
 
