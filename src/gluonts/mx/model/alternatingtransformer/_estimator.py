@@ -60,7 +60,7 @@ from .trans_decoder import TransformerDecoder
 from .trans_encoder import TransformerEncoder
 
 
-class TransformerEstimator(GluonEstimator):
+class AlternatingTransformerEstimator(GluonEstimator):
     """
     Construct a Transformer estimator.
 
