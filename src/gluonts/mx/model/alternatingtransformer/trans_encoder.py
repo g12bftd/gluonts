@@ -75,6 +75,8 @@ class TransformerEncoder(HybridBlock):
         # input layer
         inputs = self.enc_input_layer(data)
 
+        print(f"shape of inputs to the encoder: {inputs.shape}")
+
         # self-attention
         data_self_att, _ = self.enc_self_att(
             self.enc_pre_self_att(inputs, None)
