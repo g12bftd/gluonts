@@ -72,12 +72,12 @@ class TransformerEncoder(HybridBlock):
         forward layer with pre/post process blocks in between.
         """
 
-        print(f"shape of inputs to enc_input_layer: {data.shape}")
+        #print(f"shape of inputs to enc_input_layer: {data.shape}")
         
         # input layer
         inputs = self.enc_input_layer(data)
 
-        print(f"shape of inputs to the encoder: {inputs.shape}")
+        #print(f"shape of inputs to the encoder: {inputs.shape}")
 
         # self-attention
         data_self_att, _ = self.enc_self_att(
