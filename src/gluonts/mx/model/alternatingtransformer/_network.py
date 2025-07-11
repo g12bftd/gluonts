@@ -298,6 +298,8 @@ class TransformerTrainingNetwork(TransformerNetwork):
         distr_args = self.proj_dist_args(dec_output)
         distr = self.distr_output.distribution(distr_args, scale=scale)
         loss = distr.loss(future_target)
+        print(f"loss shape after distr.loss: {loss.shape}")
+        print(f"future observed values shape: {future_observed_values.shape}")
 
         # mask loss
         weighted_loss = weighted_average(
