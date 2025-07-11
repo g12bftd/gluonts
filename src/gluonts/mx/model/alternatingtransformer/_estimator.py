@@ -325,12 +325,11 @@ class AlternatingTransformerEstimator(GluonEstimator):
 
         class _Debug(SimpleTransformation):
             def transform(self, data_entry):
-                print(
-                    "past_target:",    data_entry[FieldName.PAST_TARGET].shape,
-                    "future_target:",  data_entry[FieldName.FUTURE_TARGET].shape,
-                    "past_observed:",  data_entry[FieldName.PAST_OBSERVED_VALUES].shape,
-                    "future_observed:",data_entry[FieldName.FUTURE_OBSERVED_VALUES].shape,
-                )
+                print("past_target:",     data_entry["past_target"].shape,
+                        "future_target:",   data_entry["future_target"].shape,
+                        "past_observed:",   data_entry["past_observed_values"].shape,
+                        "future_observed:", data_entry["future_observed_values"].shape,
+                    )
                 return data_entry
 
         # Return the splitter wrapped with the debug printer
