@@ -59,6 +59,9 @@ from ._network import TransformerPredictionNetwork, TransformerTrainingNetwork
 from .trans_decoder import TransformerDecoder
 from .trans_encoder import TransformerEncoder
 
+from gluonts.transform import SimpleTransformation, Chain
+from gluonts.dataset.field_names import FieldName
+
 
 class AlternatingTransformerEstimator(GluonEstimator):
     """
@@ -306,7 +309,7 @@ class AlternatingTransformerEstimator(GluonEstimator):
             "test": TestSplitSampler(),
         }[mode]
 
-        return InstanceSplitter(
+        splitter = InstanceSplitter(
             target_field=FieldName.TARGET,
             is_pad_field=FieldName.IS_PAD,
             start_field=FieldName.START,
@@ -319,6 +322,17 @@ class AlternatingTransformerEstimator(GluonEstimator):
                 FieldName.OBSERVED_VALUES,
             ],
         )
+
+        class _Debug(SimpleTransformation):
+            def transform(self, data_entry):
+                print(
+                    "past_target:",   data_entry[FieldName.PAST_TARGET].shape,
+                    "future_target:", data_entry[FieldName.FUTURE_TARGET].shape
+                )
+                return data_entry
+
+        # Return the splitter wrapped with the debug printer
+        return Chain([splitter, _Debug()])
 
     def create_training_data_loader(
         self,
