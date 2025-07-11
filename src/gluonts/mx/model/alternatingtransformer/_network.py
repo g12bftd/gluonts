@@ -296,19 +296,17 @@ class TransformerTrainingNetwork(TransformerNetwork):
 
         # compute loss
         distr_args = self.proj_dist_args(dec_output)
-        distr = self.distr_output.distribution(distr_args, scale=scale)
-        loss = distr.loss(future_target)
-        print(f"loss shape after distr.loss: {loss.shape}")
-        print(f"future observed values shape: {future_observed_values.shape}")
-
-        # mask loss
+        distr      = self.distr_output.distribution(distr_args, scale=scale)
+        
+        # (1) joint negative log-likelihood, keep a trailing axis for broadcasting
+        loss = -distr.log_prob(future_target).expand_dims(axis=-1)   # (B, T, 1)
+        
+        # (2) collapse the 3-D mask so it lines up with (B, T, 1)
+        obs_mask = future_observed_values.min(axis=-1, keepdims=True)  # (B, T, 1)
+        
         weighted_loss = weighted_average(
-            F=F,
-            x=loss,
-            weights=future_observed_values,
-            axis=1,
-        )
-
+            F=F, x=loss, weights=obs_mask, axis=1)
+        
         return weighted_loss.mean()
 
 
