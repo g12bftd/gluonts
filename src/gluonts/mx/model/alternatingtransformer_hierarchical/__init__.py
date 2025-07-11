@@ -14,7 +14,7 @@
 """Alternating Transformer model components."""
 
 # Relative imports
-from ._estimator import AlternatingHierarchicalTransformerEstimator,
+from ._estimator import AlternatingHierarchicalTransformerEstimator
 
 from gluonts.mx.model.deepvar_hierarchical._network import (
     reconcile_samples,
