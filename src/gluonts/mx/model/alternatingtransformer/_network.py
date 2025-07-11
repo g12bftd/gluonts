@@ -475,7 +475,7 @@ class TransformerPredictionNetwork(TransformerNetwork):
             future_time_feat=None,
             future_target=None,
         )
-        print(f"result of create_network_input shape: {inputs.shape}")
+        #print(f"result of create_network_input shape: {inputs.shape}")
 
         # pass through encoder
         enc_out = self.encoder(inputs)
