@@ -326,9 +326,10 @@ class AlternatingTransformerEstimator(GluonEstimator):
         class _Debug(SimpleTransformation):
             def transform(self, data_entry):
                 print(
-                    "target:",   data_entry[FieldName.TARGET].shape,
-                    "start:", data_entry[FieldName.FORECAST_START].shape,
-                    "observed:", data_entry[FieldName.OBSERVED_VALUES].shape
+                    "past_target:",    data_entry[FieldName.PAST_TARGET].shape,
+                    "future_target:",  data_entry[FieldName.FUTURE_TARGET].shape,
+                    "past_observed:",  data_entry[FieldName.PAST_OBSERVED_VALUES].shape,
+                    "future_observed:",data_entry[FieldName.FUTURE_OBSERVED_VALUES].shape,
                 )
                 return data_entry
 
