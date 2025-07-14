@@ -45,8 +45,7 @@ from gluonts.transform import (
 )
 
 from ._network import HierarchicalTransformerPredictionNetwork, HierarchicalTransformerTrainingNetwork
-from .trans_decoder import HierarchicalTransformerDecoder
-from .trans_encoder import HierarchicalTransformerEncoder
+from .transformer_utils import HierarchicalTransformerEncoder, HierarchicalTransformerDecoder
 
 from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
 
@@ -187,7 +186,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             "inner_ff_dim_scale": inner_ff_dim_scale,
             "act_type": act_type,
             "num_heads": num_heads,
-            "num_decoder_layers": num_decoder_layers
+            "num_decoder_layers": num_decoder_layers,
         }
 
         self.encoder = HierarchicalTransformerEncoder(
