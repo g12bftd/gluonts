@@ -14,6 +14,7 @@
 from typing import List, Optional, Tuple
 
 import mxnet as mx
+import numpy as np
 
 from gluonts.core.component import validated
 from gluonts.itertools import prod
@@ -23,18 +24,22 @@ from gluonts.mx.block.scaler import MeanScaler, NOPScaler
 from gluonts.mx.distribution import DistributionOutput
 from gluonts.mx.util import weighted_average
 
-from .trans_decoder import TransformerDecoder
-from .trans_encoder import TransformerEncoder
+from .trans_decoder import HierarchicalTransformerDecoder
+from .trans_encoder import HierarchicalTransformerEncoder
+
+from gluonts.mx.model.deepvar_hierarchical import reconcile_samples, coherency_error
 
 LARGE_NEGATIVE_VALUE = -99999999
 
 
-class TransformerNetwork(mx.gluon.HybridBlock):
+class HierarchicalTransformerNetwork(mx.gluon.HybridBlock):
     @validated()
     def __init__(
         self,
-        encoder: TransformerEncoder,
-        decoder: TransformerDecoder,
+        M,
+        S,
+        encoder: HierarchicalTransformerEncoder,
+        decoder: HierarchicalTransformerDecoder,
         history_length: int,
         context_length: int,
         prediction_length: int,
@@ -43,6 +48,7 @@ class TransformerNetwork(mx.gluon.HybridBlock):
         embedding_dimension: int,
         lags_seq: List[int],
         scaling: bool = True,
+        seq_axis: Optional[list[int]] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -60,9 +66,15 @@ class TransformerNetwork(mx.gluon.HybridBlock):
         ), "no duplicated lags allowed!"
         lags_seq.sort()
 
+        self.M = M
+        self.S = S
+        self.seq_axis = seq_axis
+
         self.lags_seq = lags_seq
 
         self.target_shape = distr_output.event_shape
+
+        print(f"Target shape: {self.target_shape}")
 
         with self.name_scope():
             self.proj_dist_args = distr_output.get_args_proj()
@@ -141,7 +153,7 @@ class TransformerNetwork(mx.gluon.HybridBlock):
         future_target: Optional[Tensor],  # (batch_size, prediction_length)
     ) -> Tuple[Tensor, Tensor, Tensor]:
         """
-        Creates inputs for the transformer network.
+        Creates inputs for the HierarchicalTransformer network.
 
         All tensor arguments should have NTC layout.
         """
@@ -233,7 +245,7 @@ class TransformerNetwork(mx.gluon.HybridBlock):
         return mask * LARGE_NEGATIVE_VALUE
 
 
-class TransformerTrainingNetwork(TransformerNetwork):
+class HierarchicalTransformerTrainingNetwork(HierarchicalTransformerNetwork):
     def hybrid_forward(
         self,
         F,
@@ -246,7 +258,7 @@ class TransformerTrainingNetwork(TransformerNetwork):
         future_observed_values: Tensor,
     ) -> Tensor:
         """
-        Computes the loss for training Transformer, all inputs tensors
+        Computes the loss for training HierarchicalTransformer, all inputs tensors
         representing time series have NTC layout.
 
         Parameters
@@ -332,7 +344,7 @@ class TransformerTrainingNetwork(TransformerNetwork):
         return weighted_loss.mean()
 
 
-class TransformerPredictionNetwork(TransformerNetwork):
+class HierarchicalTransformerPredictionNetwork(HierarchicalTransformerNetwork):
     @validated()
     def __init__(self, num_parallel_samples: int = 100, **kwargs) -> None:
         super().__init__(**kwargs)
