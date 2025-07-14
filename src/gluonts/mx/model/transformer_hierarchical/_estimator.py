@@ -16,7 +16,7 @@ from gluonts.dataset.loader import (
 )
 from gluonts.model.predictor import Predictor
 from gluonts.mx.batchify import batchify
-from gluonts.mx.distribution import DistributionOutput, StudentTOutput
+from gluonts.mx.distribution import DistributionOutput, StudentTOutput, LowrankMultivariateGaussianOutput
 from gluonts.mx.model.estimator import GluonEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
 from gluonts.mx.trainer import Trainer
