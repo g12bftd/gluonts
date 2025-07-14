@@ -26,7 +26,7 @@ from gluonts.dataset.loader import (
 )
 from gluonts.model.predictor import Predictor
 from gluonts.mx.batchify import batchify
-from gluonts.mx.distribution import DistributionOutput, StudentTOutput, LowrankMultivariateGaussianOutput
+from gluonts.mx.distribution import DistributionOutput, StudentTOutput, MultivariateGaussianOutput
 from gluonts.mx.model.estimator import GluonEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
 from gluonts.mx.trainer import Trainer
@@ -54,16 +54,12 @@ from gluonts.transform import (
     VstackFeatures,
 )
 
-#TODO: modify this
 from ._network import TransformerPredictionNetwork, TransformerTrainingNetwork
 from .trans_decoder import TransformerDecoder
 from .trans_encoder import TransformerEncoder
 
-from gluonts.transform import SimpleTransformation, Chain
-from gluonts.dataset.field_names import FieldName
 
-
-class AlternatingTransformerEstimator(GluonEstimator):
+class TransformerEstimator(GluonEstimator):
     """
     Construct a Transformer estimator.
 
@@ -138,15 +134,15 @@ class AlternatingTransformerEstimator(GluonEstimator):
     def __init__(
         self,
         freq: str,
+        S: np.ndarray,
+        reconciliation_method: str = "bottom_up",  #or "ols"
         prediction_length: int,
-        num_series: int = 1, 
-        num_layers: int = 2,
         context_length: Optional[int] = None,
         trainer: Trainer = Trainer(),
         dropout_rate: float = 0.1,
         cardinality: Optional[List[int]] = None,
         embedding_dimension: int = 20,
-        distr_output: Optional[DistributionOutput] =  None,
+        distr_output: DistributionOutput = StudentTOutput(),
         model_dim: int = 32,
         inner_ff_dim_scale: int = 4,
         pre_seq: str = "dn",
@@ -165,9 +161,10 @@ class AlternatingTransformerEstimator(GluonEstimator):
     ) -> None:
         super().__init__(trainer=trainer, batch_size=batch_size)
 
+        
         assert (
-            num_layers % 2 == 0
-        ), "Alternating attention requires `num_layers` to be an even int"
+            reconciliation_method in ("bottom_up", "ols")
+        ), "The value of `reconciliation_method` is incorrect. See available reconcilers"
         assert (
             prediction_length > 0
         ), "The value of `prediction_length` should be > 0"
@@ -188,10 +185,16 @@ class AlternatingTransformerEstimator(GluonEstimator):
             num_parallel_samples > 0
         ), "The value of `num_parallel_samples` should be > 0"
 
+        self.S = S
+        self.reconciliation_method = reconciliation_method
         self.prediction_length = prediction_length
         self.context_length = (
             context_length if context_length is not None else prediction_length
         )
+        if self.reconciliation_method == "bottom_up":
+            self.distr_output = MultivariateGaussianOutput(event_shape=(S.shape[1],))
+        elif self.reconciliation_method == "ols":
+            self.distr_output = MultivariateGaussianOutput(event_shape=(S.shape[1],))
         
         self.distr_output = distr_output
         self.dropout_rate = dropout_rate
@@ -212,16 +215,11 @@ class AlternatingTransformerEstimator(GluonEstimator):
         )
         self.history_length = self.context_length + max(self.lags_seq)
         self.scaling = scaling
-        self.distr_output = (
-            distr_output
-            if distr_output is not None
-            else LowrankMultivariateGaussianOutput(dim=num_series, rank=0)
-        )
 
         self.config = {
+            "S": S,
+            "reconciliation_method": reconciliation_method,
             "model_dim": model_dim,
-            "num_layers": num_layers,
-            "num_series": num_series,
             "pre_seq": pre_seq,
             "post_seq": post_seq,
             "dropout_rate": dropout_rate,
@@ -309,7 +307,7 @@ class AlternatingTransformerEstimator(GluonEstimator):
             "test": TestSplitSampler(),
         }[mode]
 
-        splitter = InstanceSplitter(
+        return InstanceSplitter(
             target_field=FieldName.TARGET,
             is_pad_field=FieldName.IS_PAD,
             start_field=FieldName.START,
@@ -322,18 +320,6 @@ class AlternatingTransformerEstimator(GluonEstimator):
                 FieldName.OBSERVED_VALUES,
             ],
         )
-
-        class _Debug(SimpleTransformation):
-            def transform(self, data_entry):
-                #print("past_target:",     data_entry["past_target"].shape,
-                 #       "future_target:",   data_entry["future_target"].shape,
-                  #      "past_observed:",   data_entry["past_observed_values"].shape,
-                   #     "future_observed:", data_entry["future_observed_values"].shape,
-                    #)
-                return data_entry
-
-        # Return the splitter wrapped with the debug printer
-        return Chain([splitter, _Debug()])
 
     def create_training_data_loader(
         self,
@@ -372,6 +358,8 @@ class AlternatingTransformerEstimator(GluonEstimator):
         return TransformerTrainingNetwork(
             encoder=self.encoder,
             decoder=self.decoder,
+            S=self.S,
+            reconciliation_method=self.reconciliation_method,
             history_length=self.history_length,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
@@ -390,6 +378,8 @@ class AlternatingTransformerEstimator(GluonEstimator):
         prediction_network = TransformerPredictionNetwork(
             encoder=self.encoder,
             decoder=self.decoder,
+            S=self.S,
+            reconciliation_method=self.reconciliation_method, 
             history_length=self.history_length,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
