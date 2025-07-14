@@ -11,6 +11,16 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-from ._estimator import TransformerEstimator
+# Relative imports
+from ._estimator import HierarchicalTransformerEstimator
 
-__all__ = ["TransformerEstimator"]
+# Helper imports
+from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
+from gluonts.mx.model.deepvar_hierarchical._network import reconcile_samples, coherency_error
+
+__all__ = [
+    "HierarchicalTransformerEstimator",
+    "projection_mat",
+    "reconcile_samples",
+    "coherency_error",
+]
