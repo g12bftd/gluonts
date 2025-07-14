@@ -13,6 +13,8 @@
 
 from functools import partial
 from typing import List, Optional
+import numpy as np
+import mxnet as mx
 
 from mxnet.gluon import HybridBlock
 
@@ -26,7 +28,7 @@ from gluonts.dataset.loader import (
 )
 from gluonts.model.predictor import Predictor
 from gluonts.mx.batchify import batchify
-from gluonts.mx.distribution import DistributionOutput, StudentTOutput, MultivariateGaussianOutput
+from gluonts.mx.distribution import DistributionOutput, StudentTOutput, LowrankMultivariateGaussianOutput
 from gluonts.mx.model.estimator import GluonEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
 from gluonts.mx.trainer import Trainer
@@ -54,16 +56,18 @@ from gluonts.transform import (
     VstackFeatures,
 )
 
-from ._network import TransformerPredictionNetwork, TransformerTrainingNetwork
-from .trans_decoder import TransformerDecoder
-from .trans_encoder import TransformerEncoder
+from ._network import HierarchicalTransformerPredictionNetwork, HierarchicalTransformerTrainingNetwork
+from .trans_decoder import HierarchicalTransformerDecoder
+from .trans_encoder import HierarchicalTransformerEncoder
+
+from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
 
 
-class TransformerEstimator(GluonEstimator):
+class HierarchicalTransformerEstimator(GluonEstimator):
     """
-    Construct a Transformer estimator.
+    Construct a HierarchicalTransformer estimator.
 
-    This implements a Transformer model, close to the one described in
+    This implements a HierarchicalTransformer model, close to the one described in
     [Vaswani2017]_.
 
     .. [Vaswani2017] Vaswani, Ashish, et al. "Attention is all you need."
@@ -91,22 +95,22 @@ class TransformerEstimator(GluonEstimator):
         Distribution to use to evaluate observations and sample predictions
         (default: StudentTOutput())
     model_dim
-        Dimension of the transformer network, i.e., embedding dimension of the
+        Dimension of the HierarchicalTransformer network, i.e., embedding dimension of the
         input (default: 32)
     inner_ff_dim_scale
-        Dimension scale of the inner hidden layer of the transformer's
+        Dimension scale of the inner hidden layer of the HierarchicalTransformer's
         feedforward network (default: 4)
     pre_seq
         Sequence that defined operations of the processing block before the
-        main transformer network. Available operations: 'd' for dropout, 'r'
+        main HierarchicalTransformer network. Available operations: 'd' for dropout, 'r'
         for residual connections and 'n' for normalization (default: 'dn')
     post_seq
         Sequence that defined operations of the processing block in and after
-        the main transformer network. Available operations: 'd' for
+        the main HierarchicalTransformer network. Available operations: 'd' for
         dropout, 'r' for residual connections and 'n' for normalization
         (default: 'drn').
     act_type
-        Activation type of the transformer network (default: 'softrelu')
+        Activation type of the HierarchicalTransformer network (default: 'softrelu')
     num_heads
         Number of heads in the multi-head attention (default: 8)
     scaling
@@ -137,6 +141,16 @@ class TransformerEstimator(GluonEstimator):
         S: np.ndarray,
         reconciliation_method: str = "bottom_up",  #or "ols"
         prediction_length: int,
+        encoder_layers: int = 2,
+        decoder_layers: int = 2,
+        D: Optional[np.ndarray] = None,
+        coherent_train_samples: bool = True,
+        coherent_pred_samples: bool = True,
+        warmstart_epoch_frac: float = 0.0,
+        num_samples_for_loss: int = 200,
+        likelihood_weight: float = 0.0,
+        CRPS_weight: float = 1.0,
+        sample_LH: bool = False,
         context_length: Optional[int] = None,
         trainer: Trainer = Trainer(),
         dropout_rate: float = 0.1,
@@ -161,7 +175,9 @@ class TransformerEstimator(GluonEstimator):
     ) -> None:
         super().__init__(trainer=trainer, batch_size=batch_size)
 
-        
+        assert (
+            encoder_layers % 2 == 0
+        ), "For alternating/axial attention, you need an even number of encoder layers"
         assert (
             reconciliation_method in ("bottom_up", "ols")
         ), "The value of `reconciliation_method` is incorrect. See available reconcilers"
@@ -185,16 +201,34 @@ class TransformerEstimator(GluonEstimator):
             num_parallel_samples > 0
         ), "The value of `num_parallel_samples` should be > 0"
 
+        assert coherent_pred_samples or (
+            not coherent_train_samples
+        ), "Cannot project only during training (and not during prediction)"
+
+        
+        M = projection_mat(S=S, D=D)
         self.S = S
-        self.reconciliation_method = reconciliation_method
+        ctx = self.trainer.ctx
+        self.M = mx.nd.array(M, ctx=ctx)
+        self.num_samples_for_loss = num_samples_for_loss
+        self.likelihood_weight = likelihood_weight
+        self.CRPS_weight = CRPS_weight
+        self.log_coherency_error = log_coherency_error
+        self.coherent_train_samples = coherent_train_samples
+        self.coherent_pred_samples = coherent_pred_samples
+        self.warmstart_epoch_frac = warmstart_epoch_frac
+        self.sample_LH = sample_LH
+        self.seq_axis = seq_axis
+        
+        self.encoder_layers = encoder_layers
+        self.decoder_layers = decoder_layers
         self.prediction_length = prediction_length
         self.context_length = (
             context_length if context_length is not None else prediction_length
         )
-        if self.reconciliation_method == "bottom_up":
-            self.distr_output = MultivariateGaussianOutput(event_shape=(S.shape[1],))
-        elif self.reconciliation_method == "ols":
-            self.distr_output = MultivariateGaussianOutput(event_shape=(S.shape[1],))
+
+        self.num_total_series, self.num_bottom_series = S.shape 
+        rank = 0
         
         self.distr_output = distr_output
         self.dropout_rate = dropout_rate
@@ -215,10 +249,12 @@ class TransformerEstimator(GluonEstimator):
         )
         self.history_length = self.context_length + max(self.lags_seq)
         self.scaling = scaling
+        
 
         self.config = {
             "S": S,
-            "reconciliation_method": reconciliation_method,
+            "encoder_layers": encoder_layers,
+            "decoder_layers": decoder_layers,
             "model_dim": model_dim,
             "pre_seq": pre_seq,
             "post_seq": post_seq,
@@ -228,7 +264,7 @@ class TransformerEstimator(GluonEstimator):
             "num_heads": num_heads,
         }
 
-        self.encoder = TransformerEncoder(
+        self.encoder = HierarchicalTransformerEncoder(
             self.context_length, self.config, prefix="enc_"
         )
         self.decoder = TransformerDecoder(
@@ -327,7 +363,7 @@ class TransformerEstimator(GluonEstimator):
         **kwargs,
     ) -> DataLoader:
         input_names = get_hybrid_forward_input_names(
-            TransformerTrainingNetwork
+            HierarchicalTransformerTrainingNetwork
         )
         instance_splitter = self._create_instance_splitter("training")
         return TrainDataLoader(
@@ -344,7 +380,7 @@ class TransformerEstimator(GluonEstimator):
         **kwargs,
     ) -> DataLoader:
         input_names = get_hybrid_forward_input_names(
-            TransformerTrainingNetwork
+            HierarchicalTransformerTrainingNetwork
         )
         instance_splitter = self._create_instance_splitter("validation")
         return ValidationDataLoader(
@@ -354,12 +390,10 @@ class TransformerEstimator(GluonEstimator):
             stack_fn=partial(batchify, ctx=self.trainer.ctx, dtype=self.dtype),
         )
 
-    def create_training_network(self) -> TransformerTrainingNetwork:
-        return TransformerTrainingNetwork(
+    def create_training_network(self) -> HierarchicalTransformerTrainingNetwork:
+        return HierarchicalTransformerTrainingNetwork(
             encoder=self.encoder,
             decoder=self.decoder,
-            S=self.S,
-            reconciliation_method=self.reconciliation_method,
             history_length=self.history_length,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
@@ -375,11 +409,10 @@ class TransformerEstimator(GluonEstimator):
     ) -> Predictor:
         prediction_splitter = self._create_instance_splitter("test")
 
-        prediction_network = TransformerPredictionNetwork(
+        prediction_network = HierarchicalTransformerPredictionNetwork(
             encoder=self.encoder,
             decoder=self.decoder,
             S=self.S,
-            reconciliation_method=self.reconciliation_method, 
             history_length=self.history_length,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
