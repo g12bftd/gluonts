@@ -11,6 +11,6 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-from ._estimator import AlternatingTransformerEstimator
+from ._estimator import TransformerEstimator
 
-__all__ = ["AlternatingTransformerEstimator"]
+__all__ = ["TransformerEstimator"]
