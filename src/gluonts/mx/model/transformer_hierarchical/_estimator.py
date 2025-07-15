@@ -45,7 +45,8 @@ from gluonts.transform import (
 )
 
 from ._network import HierarchicalTransformerPredictionNetwork, HierarchicalTransformerTrainingNetwork
-from .transformer_utils import HierarchicalTransformerEncoder, HierarchicalTransformerDecoder
+from .transformer_encoder import HierarchicalTransformerEncoder
+from .transformer_decoder import HierarchicalTransformerDecoder
 
 from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
 
