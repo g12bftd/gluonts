@@ -180,6 +180,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             "num_encoder_layers": num_encoder_layers,
             "num_series": self.S.shape[0],
             "encoder_length": context_length,
+            "attention_scheme": "full",
         }
 
         self.decoder_config = {
@@ -193,6 +194,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             "num_decoder_layers": num_decoder_layers,
             "num_series": self.S.shape[0],
             "decoder_length": prediction_length,
+            "attention_scheme": "full",
         }
 
         self.encoder = HierarchicalTransformerEncoder(
