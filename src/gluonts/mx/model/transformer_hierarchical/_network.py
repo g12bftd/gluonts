@@ -48,6 +48,7 @@ class HierarchicalTransformerNetwork(mx.gluon.HybridBlock):
         self,
         S,
         M,
+        target_dim,
         encoder: HierarchicalTransformerEncoder,
         decoder: HierarchicalTransformerDecoder,
         history_length: int,
