@@ -180,12 +180,19 @@ class HierarchicalTransformerNetwork(mx.gluon.HybridBlock):
         # 4) categorical + log‑scale  →  static feature (B, S, n_static)
         # ------------------------------------------------------------------ #
         embedded_cat = self.embedder(feat_static_cat)           # (B, C_emb)
+        print(f"embedded_cat shape before expand: {embedded_cat.shape}")
+        embedded_cat = embedded_cat.expand_dims(axis=1)
+        print(f"embedded_cat shape after expand: {embedded_cat.shape}")
+
+        embedded_cat = embedded_cat.repeat(axis=1,
+                                   repeats=self.S.shape[0])
+        print(f"embedded_cat shape after repeat: {embedded_cat.shape}")
+        
         log_scale    = F.log(scale.squeeze(axis=1))             # (B, S)
-        static_feat  = F.concat(
-            embedded_cat.expand_dims(axis=1).repeat(axis=1, repeats=self.S.shape[0]),
-            log_scale,
-            dim=-1,                        # (B, S, C_emb + 1)
-        )
+        print(f"log_scale shape: {log_scale.shape}")
+            
+        static_feat = F.concat(embedded_cat, log_scale, dim=-1)
+        print(f"static_feat shape: {static_feat.shape}")
     
         # broadcast static_feat to (B, sub_seq_len, S, n_static)
         static_feat_b = static_feat.expand_dims(axis=1).repeat(
