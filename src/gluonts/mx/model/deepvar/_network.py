@@ -486,6 +486,7 @@ class DeepVARNetwork(mx.gluon.HybridBlock):
 
         # unroll the decoder in "training mode", i.e. by providing future data
         # as well
+
         rnn_outputs, _, scale, lags_scaled, inputs = self.unroll_encoder(
             F=F,
             past_time_feat=past_time_feat,
@@ -506,6 +507,9 @@ class DeepVARNetwork(mx.gluon.HybridBlock):
             future_target_cdf,
             dim=1,
         )
+
+        print(f"input shape: {inputs.shape}")
+        print(f"target shape: {target.shape}")
 
         # assert_shape(target, (-1, seq_len, self.target_dim))
 
