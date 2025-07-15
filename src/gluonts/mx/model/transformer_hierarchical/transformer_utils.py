@@ -53,53 +53,50 @@ class SelfAttentionEncoderLayer(HybridBlock):
                 prefix="postfftransformerprocessblock_",
             )
 
-    def hybrid_forward(self, F, data: Tensor) -> Tensor:
-        """
-        A transformer encoder block consists of a self-attention and a feed-
-        forward layer with pre/post process blocks in between.
-        """
+    def hybrid_forward(
+        self,
+        F,
+        data: Tensor,
+        attn_mask: Optional[Tensor] = None,
+    ) -> Tensor:
 
-        # self-attention
-        data_self_att, _ = self.enc_self_att(
-            self.enc_pre_self_att(data, None)
-        )
-        data = self.enc_post_self_att(data_self_att, inputs)
+        residual = data
+        x = self.enc_pre_self_att(data, None)
+        x, _ = self.enc_self_att(x, attn_mask)
+        x = self.enc_post_self_att(x, residual)
 
-        # feed-forward
-        data_ff = self.enc_ff(data)
-        data = self.enc_post_ff(data_ff, data)
-
-        return data
+        residual = x
+        x = self.enc_ff(x)
+        x = self.enc_post_ff(x, residual)
+        return x
 
 
 
 class HierarchicalTransformerEncoder(HybridBlock):
-    def __init__(self, num_encoder_layers: int, config: Dict, **kwargs) -> None:
+    def __init__(self, num_layers: int, config: Dict, **kwargs):
         super().__init__(**kwargs)
-
         with self.name_scope():
             self.enc_input_layer = InputLayer(model_size=config["model_dim"])
             self.blocks = HybridSequential()
-            for i in range(num_encoder_layers):
-                self.blocks.add(SelfAttentionEncoderLayer(config))
+            for i in range(num_layers):
+                self.blocks.add(
+                    SelfAttentionEncoderLayer(config, prefix=f"blk{i}_")
+                )
 
-    def hybrid_forward(self, F, data: Tensor) -> Tensor:
+    def hybrid_forward(
+        self,
+        F,
+        data: Tensor,
+        attn_mask: Optional[Tensor] = None,
+    ) -> Tensor:
 
-        # input layer
-        inputs = self.enc_input_layer(data)
-
-        # Transformer blocks
+        x = self.enc_input_layer(data)
         for blk in self.blocks:
-            inputs = blk(inputs, attn_mask)
+            x = blk(x, attn_mask)
 
-        data = inputs
-        
-        # TODO: potential normalization of data
+        # Add final norm if needed here
 
-        return data
-
-
-
+        return x  
 
 
 
