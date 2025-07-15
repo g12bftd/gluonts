@@ -252,7 +252,12 @@ class HierarchicalTransformerEncoder(HybridBlock):
             in 'alternating' mode because the reshape keeps token order
             within each per‑series / per‑timestep slice.
         """
+
+        print(f"Input shape before input layer: {data.shape}")
+        
         x = self.input_layer(data)
+
+        print(f"Input shape after input layer: {x.shape}")
         for blk in self.blocks:
             x = blk(x, attn_mask)
 
