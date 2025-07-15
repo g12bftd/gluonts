@@ -288,14 +288,33 @@ class HierarchicalTransformerTrainingNetwork(HierarchicalTransformerNetwork):
         self.coherent_train_samples = coherent_train_samples
         self.warmstart_iter         = int(warmstart_epoch_frac * epochs * num_batches_per_epoch)
         self.sample_LH              = sample_LH
-
-        # ---------- sanity checks --------------------------------------
-        assert self.CRPS_weight >= 0 or self.likelihood_weight >= 0
-        assert (self.CRPS_weight + self.likelihood_weight) > 0
-
-        # ---------- step counter ---------------------------------------
         self.batch_no = 0
         self.num_batches_per_epoch = num_batches_per_epoch
+        self.epochs = epochs
+
+        # ---------- sanity checks --------------------------------------
+        assert self.CRPS_weight >= 0.0, "CRPS weight must be non-negative"
+        assert (
+            self.likelihood_weight >= 0.0
+        ), "Likelihood weight must be non-negative!"
+        assert (
+            self.likelihood_weight + self.CRPS_weight > 0.0
+        ), "At least one of CRPS or likelihood weights must be non-zero"
+        if self.CRPS_weight == 0.0 and self.coherent_train_samples:
+            assert (
+                "No sampling being performed. "
+                "coherent_train_samples flag is ignored"
+            )
+        if not self.sample_LH == 0.0 and self.coherent_train_samples:
+            assert (
+                "No sampling being performed. "
+                "coherent_train_samples flag is ignored"
+            )
+        if self.likelihood_weight == 0.0 and self.sample_LH:
+            assert (
+                "likelihood_weight is 0 but sample likelihoods are still "
+                "being calculated. Set sample_LH=0 when likelihood_weight=0"
+            )
 
 
     def hybrid_forward(
