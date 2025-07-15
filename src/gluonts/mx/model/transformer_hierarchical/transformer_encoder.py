@@ -181,13 +181,12 @@ class HierarchicalTransformerEncoder(HybridBlock):
 
     Parameters
     ----------
-    num_layers
-        Number of encoder layers to stack.
     config
         Dictionary that must contain:
             - "model_dim": embedding size
             - "num_series": (# spatial locations) – **needed for 'alternating'**
             - all keys required by the individual encoder layers
+            - "num_encoder_layers"
     attention_scheme : {"full", "alternating"}
         * "full"        – every layer is a full self‑attention block
         * "alternating" – even layers: temporal attention, odd layers: spatial
@@ -195,7 +194,6 @@ class HierarchicalTransformerEncoder(HybridBlock):
     @validated()
     def __init__(
         self,
-        num_layers: int,
         config: Dict,
         attention_scheme: str = "full",
         **kwargs,
@@ -214,13 +212,13 @@ class HierarchicalTransformerEncoder(HybridBlock):
             )
 
         self.attention_scheme = attention_scheme
-        self.num_layers = num_layers
+        self.num_encoder_layers = int(config["num_encoder_layers"])
 
         with self.name_scope():
             self.input_layer = InputLayer(model_size=config["model_dim"])
 
             self.blocks = HybridSequential()
-            for i in range(num_layers):
+            for i in range(self.num_encoder_layers):
                 if attention_scheme == "full":
                     block = SelfAttentionEncoderLayer(
                         config, prefix=f"full_blk{i}_"
@@ -260,25 +258,5 @@ class HierarchicalTransformerEncoder(HybridBlock):
             x = self.final_norm(x)
 
         return x 
-
-
-
-class HierarchicalTransformerDecoder(HybridBlock):
-    def __init__(self, num_decoder_layers: int, config: Dict, **kwargs) -> None:
-        super().__init__(**kwargs)
-
-    def cache_reset(self):
-        self.cache = {}
-    
-    def hybrid_forward(
-        self, 
-        F, 
-        data: Tensor,
-        encoder_output: Tensor,
-        mask: Optional[Tensor],
-        is_train: bool = True,
-        ) -> Tensor:
-
-        return data
 
     
