@@ -22,8 +22,8 @@ from gluonts.mx.model.deepvar_hierarchical._network import (
     coherency_error,
 )
 
-from .hierarchical_encoder import HierarchicalTransformerEncoder
-from .hierarchical_decoder import HierarchicalTransformerDecoder
+from .transformer_encoder import HierarchicalTransformerEncoder
+from .transformer_decoder import HierarchicalTransformerDecoder
 
 logger = logging.getLogger(__name__)
 
