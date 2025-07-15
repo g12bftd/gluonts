@@ -295,6 +295,7 @@ class HierarchicalTransformerTrainingNetwork(HierarchicalTransformerNetwork):
 
         # ---------- step counter ---------------------------------------
         self.batch_no = 0
+        self.num_batches_per_epoch = num_batches_per_epoch
 
 
     def hybrid_forward(
