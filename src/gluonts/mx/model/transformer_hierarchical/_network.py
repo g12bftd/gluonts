@@ -207,11 +207,10 @@ class HierarchicalTransformerNetwork(mx.gluon.HybridBlock):
         inputs = F.concat(lags_scaled, time_feat_b, static_feat_b, dim=-1)
     
         # ------------- diagnostics ----------------------------------------
-        if self.debug:
-            print("lags_scaled :", lags_scaled.shape)
-            print("time_feat_b :", time_feat_b.shape)
-            print("static_feat:", static_feat_b.shape)
-            print("inputs     :", inputs.shape)  # (B, sub_seq_len, S, F_ps)
+        print("lags_scaled :", lags_scaled.shape)
+        print("time_feat_b :", time_feat_b.shape)
+        print("static_feat:", static_feat_b.shape)
+        print("inputs     :", inputs.shape)  # (B, sub_seq_len, S, F_ps)
     
         return inputs, scale, static_feat
 
