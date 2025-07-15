@@ -1,7 +1,3 @@
-# --------------------------------------------------------------------------
-# HierarchicalTransformerDecoder.py
-# --------------------------------------------------------------------------
-#
 # A causal Transformer decoder that can work either
 #   • with **full self‑attention** on the flattened token axis, or
 #   • with the **alternating temporal / spatial** pattern described earlier.
@@ -29,10 +25,6 @@ from gluonts.mx.model.transformer.layers import (
     TransformerFeedForward,
     TransformerProcessBlock,
 )
-
-# --------------------------------------------------------------------------
-# 1.  Helpers for view switching (flatten  <->  temporal / spatial)
-# --------------------------------------------------------------------------
 
 class _ReshapeMixIn:
     """
@@ -69,11 +61,6 @@ class _ReshapeMixIn:
         ones  = F.ones((T, T))
         tril  = F.np.tril(ones) if hasattr(F.np, "tril") else F.linalg.tril(ones)
         return tril  # (T, T)  with 1.0 where j <= i
-
-
-# --------------------------------------------------------------------------
-# 2.  Decoder block variants
-# --------------------------------------------------------------------------
 
 class SelfAttentionDecoderLayer(HybridBlock):
     """
@@ -125,7 +112,6 @@ class SelfAttentionDecoderLayer(HybridBlock):
                 prefix="post_ff_",
             )
 
-    # no caching here for brevity; GluonTS will still work in training
     def hybrid_forward(self, F, data, enc_out, mask=None, is_train=True):
         residual = data
         x_pre = self.pre(data, None)
@@ -258,22 +244,17 @@ class AlternatingDecoderLayer(_ReshapeMixIn, HybridBlock):
         return x
 
 
-# --------------------------------------------------------------------------
-# 3.  HierarchicalTransformerDecoder (public class)
-# --------------------------------------------------------------------------
-
 class HierarchicalTransformerDecoder(HybridBlock):
     """
     A stack of `num_decoder_layers` causal decoder blocks.
 
     Parameters
     ----------
-    num_decoder_layers
         How many layers to stack.
     config
         Must contain at least:
             - "model_dim", "pre_seq", "post_seq", "inner_ff_dim_scale",
-              "num_heads", "dropout_rate"
+              "num_heads", "dropout_rate", "num_decoder_layers"
             - "num_series"                (required if attention_scheme="alternating")
     attention_scheme
         "full"         – every layer uses flattened self‑attention
@@ -282,7 +263,6 @@ class HierarchicalTransformerDecoder(HybridBlock):
     @validated()
     def __init__(
         self,
-        num_decoder_layers: int,
         config: Dict,
         attention_scheme: str = "full",
         **kwargs,
@@ -298,13 +278,13 @@ class HierarchicalTransformerDecoder(HybridBlock):
             raise KeyError("'num_series' must be in config for alternating mode.")
 
         self.attention_scheme = attention_scheme
-        self.num_layers = num_decoder_layers
+        self.num_decoder_layers = int(config["num_decoder_layers"])
 
         with self.name_scope():
             self.input_layer = InputLayer(model_size=config["model_dim"])
 
             self.blocks = HybridSequential()
-            for i in range(num_decoder_layers):
+            for i in range(self.num_decoder_layers):
                 if attention_scheme == "full":
                     blk = SelfAttentionDecoderLayer(
                         config, prefix=f"dec_full_{i}_"
