@@ -11,6 +11,7 @@ from gluonts.mx.block.feature import FeatureEmbedder
 from gluonts.mx.block.scaler import MeanScaler, NOPScaler
 from gluonts.mx.distribution import (
     DistributionOutput,
+    Distribution,
     EmpiricalDistribution,
     LowrankMultivariateGaussian,
 )
