@@ -315,5 +315,5 @@ class HierarchicalTransformerDecoder(HybridBlock):
 
         x = self.input_layer(data)
         for blk in self.blocks:
-            x = blk(x, encoder_output, mask, is_train=is_train)
+            x = blk(x, encoder_output, mask, is_train)
         return x
