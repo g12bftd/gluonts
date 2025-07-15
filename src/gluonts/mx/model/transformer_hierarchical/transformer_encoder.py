@@ -2,6 +2,8 @@ from typing import Dict, Optional
 
 from mxnet.gluon import HybridBlock
 from mxnet.gluon.nn import HybridSequential
+import mxnet as mx
+import numpy as np
 
 
 from gluonts.core.component import validated
@@ -231,7 +233,7 @@ class HierarchicalTransformerEncoder(HybridBlock):
                         prefix=f"{mode}_blk{i}_",
                     )
                 self.blocks.add(block)
-             self.final_norm = mx.gluon.nn.LayerNorm(axis=-1)
+                self.final_norm = mx.gluon.nn.LayerNorm(axis=-1)
 
     def hybrid_forward(
         self,
@@ -254,8 +256,8 @@ class HierarchicalTransformerEncoder(HybridBlock):
         for blk in self.blocks:
             x = blk(x, attn_mask)
 
-        if hasattr(self, "final_norm"):
-            x = self.final_norm(x)
+        #if hasattr(self, "final_norm"):
+         #   x = self.final_norm(x)
 
         return x 
 
