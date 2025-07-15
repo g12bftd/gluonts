@@ -124,99 +124,97 @@ class HierarchicalTransformerNetwork(mx.gluon.HybridBlock):
     def create_network_input(
         self,
         F,
-        feat_static_cat: Tensor,  # (batch_size, num_features)
-        past_time_feat: Tensor,  # (batch_size, num_features, history_length)
-        past_target: Tensor,  # (batch_size, history_length, 1)
-        past_observed_values: Tensor,  # (batch_size, history_length)
-        future_time_feat: Optional[
-            Tensor
-        ],  # (batch_size, num_features, prediction_length)
-        future_target: Optional[Tensor],  # (batch_size, prediction_length)
+        feat_static_cat: Tensor,          # (B, C_cat)
+        past_time_feat: Tensor,           # (B, T_hist, n_time)
+        past_target: Tensor,              # (B, T_hist, S)
+        past_observed_values: Tensor,     # (B, T_hist, S)
+        future_time_feat: Optional[Tensor],   # (B, P, n_time)
+        future_target: Optional[Tensor],      # (B, P, S)
     ) -> Tuple[Tensor, Tensor, Tensor]:
         """
-        Creates inputs for the transformer network.
-
-        All tensor arguments should have NTC layout.
+        Returns
+        -------
+        inputs : Tensor  (B, sub_seq_len, S, F_per_series)
+        scale  : Tensor  (B, 1, S)
+        static_feat : Tensor  (B, S, n_static)
         """
-
+    
+        # ------------------------------------------------------------------ #
+        # 1) choose the slice we need
+        # ------------------------------------------------------------------ #
         if future_time_feat is None or future_target is None:
-            time_feat = past_time_feat.slice_axis(
-                axis=1,
-                begin=self.history_length - self.context_length,
-                end=None,
-            )
-            sequence = past_target
-            sequence_length = self.history_length
-            subsequences_length = self.context_length
+            time_feat     = past_time_feat[:, -self.context_length :, :]   # (B,T,n_time)
+            sequence      = past_target                                    # (B,T,S)
+            subseq_len    = self.context_length
+            seq_length    = self.history_length
         else:
             time_feat = F.concat(
-                past_time_feat.slice_axis(
-                    axis=1,
-                    begin=self.history_length - self.context_length,
-                    end=None,
-                ),
+                past_time_feat[:, -self.context_length :, :],
                 future_time_feat,
-                dim=1,
+                dim=1,                              # (B, T+P, n_time)
             )
-            sequence = F.concat(past_target, future_target, dim=1)
-            sequence_length = self.history_length + self.prediction_length
-            subsequences_length = self.context_length + self.prediction_length
-
-        # (batch_size, sub_seq_len, *target_shape, num_lags)
+            sequence   = F.concat(past_target, future_target, dim=1)       # (B,T+P,S)
+            subseq_len = self.context_length + self.prediction_length
+            seq_length = self.history_length + self.prediction_length
+    
+        # ------------------------------------------------------------------ #
+        # 2) lagged values  (B, sub_seq_len, S, n_lags)
+        # ------------------------------------------------------------------ #
         lags = self.get_lagged_subsequences(
             F=F,
             sequence=sequence,
-            sequence_length=sequence_length,
+            sequence_length=seq_length,
             indices=self.lags_seq,
-            subsequences_length=subsequences_length,
-        )
-
-        # scale is computed on the context length last units of the past target
-        # scale shape is (batch_size, 1, *target_shape)
+            subsequences_length=subseq_len,
+        )                               # (B, sub_seq_len, S, n_lags)
+    
+        # ------------------------------------------------------------------ #
+        # 3) scale on the *context* part of past_target, keep per‑series
+        # ------------------------------------------------------------------ #
         _, scale = self.scaler(
-            past_target.slice_axis(
-                axis=1, begin=-self.context_length, end=None
-            ),
-            past_observed_values.slice_axis(
-                axis=1, begin=-self.context_length, end=None
-            ),
+            past_target[:, -self.context_length :, :],          # (B,C,S)
+            past_observed_values[:, -self.context_length :, :], # (B,C,S)
+        )                               # (B, 1, S)
+    
+        # ------------------------------------------------------------------ #
+        # 4) categorical + log‑scale  →  static feature (B, S, n_static)
+        # ------------------------------------------------------------------ #
+        embedded_cat = self.embedder(feat_static_cat)           # (B, C_emb)
+        log_scale    = F.log(scale.squeeze(axis=1))             # (B, S)
+        static_feat  = F.concat(
+            embedded_cat.expand_dims(axis=1).repeat(axis=1, repeats=self.S.shape[0]),
+            log_scale,
+            dim=-1,                        # (B, S, C_emb + 1)
         )
-        embedded_cat = self.embedder(feat_static_cat)
-
-        # in addition to embedding features, use the log scale as it can help
-        # prediction too(batch_size, num_features + prod(target_shape))
-        static_feat = F.concat(
-            embedded_cat,
-            (
-                F.log(scale)
-                if len(self.target_shape) == 0
-                else F.log(scale.squeeze(axis=1))
-            ),
-            dim=1,
+    
+        # broadcast static_feat to (B, sub_seq_len, S, n_static)
+        static_feat_b = static_feat.expand_dims(axis=1).repeat(
+            axis=1, repeats=subseq_len
         )
-
-        repeated_static_feat = static_feat.expand_dims(axis=1).repeat(
-            axis=1, repeats=subsequences_length
+    
+        # ------------------------------------------------------------------ #
+        # 5) broadcast time features  → (B, sub_seq_len, S, n_time)
+        # ------------------------------------------------------------------ #
+        time_feat_b = time_feat.expand_dims(axis=2).repeat(
+            axis=2, repeats=self.S.shape[0]
         )
-
-        # (batch_size, sub_seq_len, *target_shape, num_lags)
-        lags_scaled = F.broadcast_div(lags, scale.expand_dims(axis=-1))
-
-        # from (batch_size, sub_seq_len, *target_shape, num_lags)
-        # to (batch_size, sub_seq_len, prod(target_shape) * num_lags)
-        input_lags = F.reshape(
-            data=lags_scaled,
-            shape=(
-                -1,
-                subsequences_length,
-                len(self.lags_seq) * prod(self.target_shape),
-            ),
-        )
-
-        # (batch_size, sub_seq_len, input_dim)
-        inputs = F.concat(input_lags, time_feat, repeated_static_feat, dim=-1)
-
+    
+        # ------------------------------------------------------------------ #
+        # 6) put everything together  ➜  (B, sub_seq_len, S, F_per_series)
+        # ------------------------------------------------------------------ #
+        lags_scaled  = F.broadcast_div(lags, scale.expand_dims(axis=-1))
+    
+        inputs = F.concat(lags_scaled, time_feat_b, static_feat_b, dim=-1)
+    
+        # ------------- diagnostics ----------------------------------------
+        if self.debug:
+            print("lags_scaled :", lags_scaled.shape)
+            print("time_feat_b :", time_feat_b.shape)
+            print("static_feat:", static_feat_b.shape)
+            print("inputs     :", inputs.shape)  # (B, sub_seq_len, S, F_ps)
+    
         return inputs, scale, static_feat
+
 
     def get_samples_for_loss(self, distr: Distribution) -> Tensor:
         """
