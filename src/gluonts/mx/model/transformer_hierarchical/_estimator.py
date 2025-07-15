@@ -96,6 +96,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
     ) -> None:
         rank = 0
         target_dim = len(S)
+        self.target_dim = target_dim
         distr_output = LowrankMultivariateGaussianOutput(
             dim=target_dim, rank=rank
         )
@@ -318,6 +319,18 @@ class HierarchicalTransformerEstimator(GluonEstimator):
 
     def create_training_network(self) -> HierarchicalTransformerTrainingNetwork:
         return HierarchicalTransformerTrainingNetwork(
+            M=self.M,
+            S=self.S,
+            num_samples_for_loss=self.num_samples_for_loss,
+            likelihood_weight=self.likelihood_weight,
+            CRPS_weight=self.CRPS_weight,
+            seq_axis=self.seq_axis,
+            coherent_train_samples=self.coherent_train_samples,
+            warmstart_epoch_frac=self.warmstart_epoch_frac,
+            epochs=self.trainer.epochs,
+            num_batches_per_epoch=self.trainer.num_batches_per_epoch,
+            sample_LH=self.sample_LH,
+            target_dim=self.target_dim,
             encoder=self.encoder,
             decoder=self.decoder,
             history_length=self.history_length,
@@ -336,6 +349,11 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         prediction_splitter = self._create_instance_splitter("test")
 
         prediction_network = HierarchicalTransformerPredictionNetwork(
+            M=self.M,
+            S=self.S,
+            log_coherency_error=self.log_coherency_error,
+            coherent_pred_samples=self.coherent_pred_samples,
+            target_dim=self.target_dim,
             encoder=self.encoder,
             decoder=self.decoder,
             history_length=self.history_length,
