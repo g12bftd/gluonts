@@ -286,11 +286,12 @@ class HierarchicalTransformerTrainingNetwork(HierarchicalTransformerNetwork):
         self.likelihood_weight      = likelihood_weight
         self.CRPS_weight            = CRPS_weight
         self.coherent_train_samples = coherent_train_samples
-        self.warmstart_iter         = int(warmstart_epoch_frac * epochs * num_batches_per_epoch)
         self.sample_LH              = sample_LH
         self.batch_no = 0
         self.num_batches_per_epoch = num_batches_per_epoch
         self.epochs = epochs
+        self.warmstart_epoch_frac = warmstart_epoch_frac
+        self.warmstart_iter         = int(warmstart_epoch_frac * epochs * num_batches_per_epoch)
 
         # ---------- sanity checks --------------------------------------
         assert self.CRPS_weight >= 0.0, "CRPS weight must be non-negative"
