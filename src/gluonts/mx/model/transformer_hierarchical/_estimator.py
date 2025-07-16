@@ -389,9 +389,11 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         )
 
     def _full_transform(self, mode: str) -> Transformation:
-        return self._basic_feature_chain()           
-             + self._create_instance_splitter(mode)  
-             + self._token_builder()
+        return (
+            self._basic_feature_chain()          # feature engineering
+            + self._create_instance_splitter(mode)  # windowing (training / val / test)
+            + self._token_builder()                 # adds "enc_tokens" & "dec_tokens"
+        )
 
 
     def create_training_data_loader(
