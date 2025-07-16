@@ -275,11 +275,13 @@ class HierarchicalTransformerEstimator(GluonEstimator):
     
         # ---------- dimensions & context ---------------------------------
         B, T, N = past_target.shape
+        print(f"past_target shape: {past_target.shape}")
         L       = future_obs.shape[1]            # prediction_length
+        print(f"future_obs shape: {future_obs.shape}")
         ctx     = past_target.context            # gpu(0) or cpu(0)
     
         # ---------- static category  (B,1) -> (B,N,1) --------------------
-        static_cat = data[FieldName.FEAT_STATIC_CAT].expand_dims(1)   # (B,1,1)
+        static_cat = data["feat_static_cat"] .expand_dims(1)   # (B,1,1)
         static_cat = mx.nd.broadcast_to(static_cat, shape=(B, N, 1))  # (B,N,1)
     
         stc_enc = mx.nd.broadcast_to(static_cat.expand_dims(-1), (B, N, T, 1))
