@@ -138,6 +138,11 @@ class HierarchicalTransformerNetwork(mx.gluon.HybridBlock):
         scale  : Tensor  (B, 1, S)
         static_feat : Tensor  (B, S, n_static)
         """
+        print(f"past_target shape: {past_target.shape}")
+        print(f"future_target shape: {future_target.shape}") 
+
+ 
+
     
         # ------------------------------------------------------------------ #
         # 1) choose the slice we need
