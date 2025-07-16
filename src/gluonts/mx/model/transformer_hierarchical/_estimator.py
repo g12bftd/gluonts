@@ -235,87 +235,63 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         return _BuildTokens()
 
 
-    def build_enc_dec_tokens(self, data):
+    def build_enc_dec_tokens(self, entry):
         """
-        Build the tensors the encoder and decoder will consume.
-    
         Parameters
         ----------
-        data : dict
-            One training instance produced by InstanceSplitter.
-            Must contain at least the fields printed in your BATCH SHAPES:
-                past_target, past_time_feat, past_observed_values,
-                future_time_feat, future_observed_values,
-                feat_static_cat.
+        entry : dict  (one split window)
+            Keys created by InstanceSplitter.
     
         Returns
         -------
-        enc_tokens : mx.nd.NDArray, shape (B, N, T, 4)
-        dec_tokens : mx.nd.NDArray, shape (B, N, L, 4)
-            where
-                B = batch size
-                N = 89 nodes in the hierarchy  (rows of S)
-                T = context_length             (37 quarters here)
-                L = prediction_length          (4 quarters here)
-            The last dimension packs 4 per‑step features:
-                0. target (or lag‑1 value for decoder)
-                1. calendar covariate          (quarter id / age)
-                2. observed‑values mask        (1 = present, 0 = missing)
-                3. static category id          (broadcast)
+        enc_tokens : NDArray (N, T, 4)
+        dec_tokens : NDArray (N, L, 4)
         """
+        
     
-        # ---------- tensors directly from the batch -----------------------
-        past_target   = data["past_target"]          # (B, T, N)
-        past_obs      = data["past_observed_values"]
-        past_timefeat = data["past_time_feat"]       # (B, T, 1)
+        # -------------- raw arrays ------------------------------------
+        past_target   = entry["past_target"]            # (T, N)
+        past_obs      = entry["past_observed_values"]   # (T, N)
+        past_timefeat = entry["past_time_feat"]         # (T, 1)
     
-        future_obs      = data["future_observed_values"]
-        future_timefeat = data["future_time_feat"]
-        static_cat = data[FieldName.FEAT_STATIC_CAT] # th
+        future_obs      = entry["future_observed_values"]  # (L, N)
+        future_timefeat = entry["future_time_feat"]        # (L, 1)
     
-        # ---------- dimensions & context ---------------------------------
+        N = past_target.shape[1]
+        T = past_target.shape[0]
+        L = future_obs.shape[0]
 
         print(f"past_target shape: {past_target.shape}")
         print(f"future_obs shape: {future_obs.shape}")
-        B, T, N = past_target.shape
-        
-        L       = future_obs.shape[1]            # prediction_length
-       
-        ctx     = past_target.context            # gpu(0) or cpu(0)
+        print(f"Number of series: {N}, Context timesteps: {T}, Prediction timesteps: {L}")
     
-        # ---------- static category  (B,1) -> (B,N,1) --------------------
-        static_cat = data["feat_static_cat"] .expand_dims(1)   # (B,1,1)
-        static_cat = mx.nd.broadcast_to(static_cat, shape=(B, N, 1))  # (B,N,1)
+        # -------------- static category -------------------------------
+        static_cat = entry[FieldName.FEAT_STATIC_CAT]      # (1,) or (C,)
+        static_cat = static_cat.expand_dims(0)             # (1,C)
+        static_cat = mx.nd.broadcast_to(static_cat, (N, static_cat.shape[-1]))  # (N,C)
+        stc_enc = mx.nd.broadcast_to(static_cat.expand_dims(1), (N, T, 1))
+        stc_dec = mx.nd.broadcast_to(static_cat.expand_dims(1), (N, L, 1))
     
-        stc_enc = mx.nd.broadcast_to(static_cat.expand_dims(-1), (B, N, T, 1))
-        stc_dec = mx.nd.broadcast_to(static_cat.expand_dims(-1), (B, N, L, 1))
+        # -------------- calendar features -----------------------------
+        ptf = mx.nd.broadcast_to(past_timefeat.T, (N, T)).expand_dims(-1)   # (N,T,1)
+        ftf = mx.nd.broadcast_to(future_timefeat.T, (N, L)).expand_dims(-1) # (N,L,1)
     
-        # ---------- calendar features ------------------------------------
-        # past: (B,T,1) -> (B,1,T,1) -> (B,N,T,1)
-        ptf = past_timefeat.transpose((0, 2, 1)).expand_dims(-1)       # (B,1,T,1)
-        ptf = mx.nd.broadcast_to(ptf, shape=(B, N, T, 1))
+        # -------------- observed masks --------------------------------
+        pob = past_obs.T.expand_dims(-1)     # (N,T,1)
+        fob = future_obs.T.expand_dims(-1)   # (N,L,1)
     
-        # future: (B,L,1) -> (B,1,L,1) -> (B,N,L,1)
-        ftf = future_timefeat.transpose((0, 2, 1)).expand_dims(-1)     # (B,1,L,1)
-        ftf = mx.nd.broadcast_to(ftf, shape=(B, N, L, 1))
+        # -------------- target channels -------------------------------
+        ptt = past_target.T.expand_dims(-1)  # (N,T,1)
     
-        # ---------- observed‑value masks ---------------------------------
-        pob = past_obs.transpose((0, 2, 1)).expand_dims(-1)            # (B,N,T,1)
-        fob = future_obs.transpose((0, 2, 1)).expand_dims(-1)          # (B,N,L,1)
+        last_ctx = past_target[-1].expand_dims(-1).expand_dims(-1)  # (N,1,1)
+        last_ctx = mx.nd.broadcast_to(last_ctx, (N, L, 1))          # (N,L,1)
     
-        # ---------- target channels --------------------------------------
-        # encoder uses the true past
-        ptt = past_target.transpose((0, 2, 1)).expand_dims(-1)         # (B,N,T,1)
-    
-        # decoder starts with the last context value (lag‑1), repeated over L
-        last_ctx = past_target[:, -1, :].expand_dims(-1).expand_dims(-1)  # (B,N,1,1)
-        last_ctx = mx.nd.broadcast_to(last_ctx, shape=(B, N, L, 1))       # (B,N,L,1)
-    
-        # ---------- concatenate features ---------------------------------
-        enc_tokens = mx.nd.concat(ptt, ptf, pob, stc_enc, dim=-1)      # (B,N,T,4)
-        dec_tokens = mx.nd.concat(last_ctx, ftf, fob, stc_dec, dim=-1) # (B,N,L,4)
+        # -------------- concat  ---------------------------------------
+        enc_tokens = mx.nd.concat(ptt, ptf, pob, stc_enc, dim=-1)   # (N,T,4)
+        dec_tokens = mx.nd.concat(last_ctx, ftf, fob, stc_dec, dim=-1)  # (N,L,4)
     
         return enc_tokens.astype("float32"), dec_tokens.astype("float32")
+
 
 
 
