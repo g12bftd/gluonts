@@ -256,6 +256,16 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         future_timefeat = to_nd(entry["future_time_feat"])        # (L, 1)
     
         static_cat = to_nd(entry[FieldName.FEAT_STATIC_CAT])      # (1,) or (C,)
+
+        print(f"past_target shape: {past_target.shape}")
+        print(f"past_obs shape: {past_obs.shape}")   
+        print(f"past_timefeat shape: {past_timefeat.shape}")
+        print(f"future_obs shape: {future_obs.shape}")
+        print(f"future_timefeat shape: {future_timefeat.shape}")
+        print(f"static_cat shape: {static_cat.shape}")
+
+        print(f"Context timesteps: {T}, number of series: {N}, prediction length: {L}")
+
     
         # ---- shapes ------------------------------------------------------
         T, N = past_target.shape
