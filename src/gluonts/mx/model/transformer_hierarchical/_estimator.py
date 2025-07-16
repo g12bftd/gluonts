@@ -237,60 +237,55 @@ class HierarchicalTransformerEstimator(GluonEstimator):
 
     def build_enc_dec_tokens(self, entry):
         """
-        Parameters
-        ----------
-        entry : dict  (one split window)
-            Keys created by InstanceSplitter.
-    
-        Returns
-        -------
-        enc_tokens : NDArray (N, T, 4)
-        dec_tokens : NDArray (N, L, 4)
+        Build encoder & decoder tokens for *one* split window.
+        Works whether the incoming arrays are NumPy or MX NDArrays.
         """
-        
     
-        # -------------- raw arrays ------------------------------------
-        past_target   = entry["past_target"]            # (T, N)
-        past_obs      = entry["past_observed_values"]   # (T, N)
-        past_timefeat = entry["past_time_feat"]         # (T, 1)
+        ctx = self.trainer.ctx                    # gpu(0) or cpu(0)
     
-        future_obs      = entry["future_observed_values"]  # (L, N)
-        future_timefeat = entry["future_time_feat"]        # (L, 1)
+        # ---- convenience -------------------------------------------------
+        def to_nd(x):
+            return x if isinstance(x, mx.nd.NDArray) else mx.nd.array(x, ctx=ctx)
     
-        N = past_target.shape[1]
-        T = past_target.shape[0]
-        L = future_obs.shape[0]
-
-        print(f"past_target shape: {past_target.shape}")
-        print(f"future_obs shape: {future_obs.shape}")
-        print(f"Number of series: {N}, Context timesteps: {T}, Prediction timesteps: {L}")
+        # ---- tensors -----------------------------------------------------
+        past_target   = to_nd(entry["past_target"])            # (T, N)
+        past_obs      = to_nd(entry["past_observed_values"])   # (T, N)
+        past_timefeat = to_nd(entry["past_time_feat"])         # (T, 1)
     
-        # -------------- static category -------------------------------
-        static_cat = entry[FieldName.FEAT_STATIC_CAT]      # (1,) or (C,)
-        static_cat = static_cat.expand_dims(0)             # (1,C)
+        future_obs      = to_nd(entry["future_observed_values"])  # (L, N)
+        future_timefeat = to_nd(entry["future_time_feat"])        # (L, 1)
+    
+        static_cat = to_nd(entry["static_cat"])      # (1,) or (C,)
+    
+        # ---- shapes ------------------------------------------------------
+        T, N = past_target.shape
+        L    = future_obs.shape[0]
+    
+        # ---- static category  (1,C) → (N,1) ------------------------------
+        static_cat = static_cat.expand_dims(0)           # (1,C)
         static_cat = mx.nd.broadcast_to(static_cat, (N, static_cat.shape[-1]))  # (N,C)
         stc_enc = mx.nd.broadcast_to(static_cat.expand_dims(1), (N, T, 1))
         stc_dec = mx.nd.broadcast_to(static_cat.expand_dims(1), (N, L, 1))
     
-        # -------------- calendar features -----------------------------
-        ptf = mx.nd.broadcast_to(past_timefeat.T, (N, T)).expand_dims(-1)   # (N,T,1)
-        ftf = mx.nd.broadcast_to(future_timefeat.T, (N, L)).expand_dims(-1) # (N,L,1)
+        # ---- calendar features ------------------------------------------
+        ptf = mx.nd.broadcast_to(past_timefeat.T.expand_dims(-1),  (N, T, 1))
+        ftf = mx.nd.broadcast_to(future_timefeat.T.expand_dims(-1), (N, L, 1))
     
-        # -------------- observed masks --------------------------------
-        pob = past_obs.T.expand_dims(-1)     # (N,T,1)
-        fob = future_obs.T.expand_dims(-1)   # (N,L,1)
+        # ---- observed masks ---------------------------------------------
+        pob = past_obs.T.expand_dims(-1)      # (N,T,1)
+        fob = future_obs.T.expand_dims(-1)    # (N,L,1)
     
-        # -------------- target channels -------------------------------
-        ptt = past_target.T.expand_dims(-1)  # (N,T,1)
-    
+        # ---- target channels --------------------------------------------
+        ptt = past_target.T.expand_dims(-1)   # (N,T,1)
         last_ctx = past_target[-1].expand_dims(-1).expand_dims(-1)  # (N,1,1)
-        last_ctx = mx.nd.broadcast_to(last_ctx, (N, L, 1))          # (N,L,1)
+        last_ctx = mx.nd.broadcast_to(last_ctx, (N, L, 1))
     
-        # -------------- concat  ---------------------------------------
-        enc_tokens = mx.nd.concat(ptt, ptf, pob, stc_enc, dim=-1)   # (N,T,4)
-        dec_tokens = mx.nd.concat(last_ctx, ftf, fob, stc_dec, dim=-1)  # (N,L,4)
+        # ---- stack -------------------------------------------------------
+        enc_tokens = mx.nd.concat(ptt, ptf, pob, stc_enc, dim=-1)     # (N,T,4)
+        dec_tokens = mx.nd.concat(last_ctx, ftf, fob, stc_dec, dim=-1)# (N,L,4)
     
         return enc_tokens.astype("float32"), dec_tokens.astype("float32")
+
 
 
 
