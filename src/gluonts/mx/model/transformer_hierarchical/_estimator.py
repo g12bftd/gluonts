@@ -6,6 +6,7 @@ from mxnet.gluon import HybridBlock
 import mxnet as mx
 import numpy as np
 
+from gluonts.transform._base import MapTransformation
 from gluonts.core.component import validated
 from gluonts.dataset.common import Dataset
 from gluonts.dataset.field_names import FieldName
@@ -216,7 +217,104 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             else ValidationSplitSampler(min_future=prediction_length)
         )
 
-    def create_transformation(self) -> Transformation:
+    def _token_builder(self) -> Transformation:
+        """
+        Wrap self._build_enc_dec_tokens(data) so it can sit in a Chain.
+        """
+    
+        # --- define an inner class *inside the method* -----------------
+        estimator = self # capture outer `self` for closure
+    
+        class _BuildTokens(MapTransformation):
+            def map_transform(inner_self, data, is_train: bool):
+                enc, dec = estimator.build_enc_dec_tokens(data)
+                data["enc_tokens"] = enc
+                data["dec_tokens"] = dec
+                return data
+
+        return _BuildTokens()
+
+
+    def build_enc_dec_tokens(self, data):
+        """
+        Build the tensors the encoder and decoder will consume.
+    
+        Parameters
+        ----------
+        data : dict
+            One training instance produced by InstanceSplitter.
+            Must contain at least the fields printed in your BATCH SHAPES:
+                past_target, past_time_feat, past_observed_values,
+                future_time_feat, future_observed_values,
+                feat_static_cat.
+    
+        Returns
+        -------
+        enc_tokens : mx.nd.NDArray, shape (B, N, T, 4)
+        dec_tokens : mx.nd.NDArray, shape (B, N, L, 4)
+            where
+                B = batch size
+                N = 89 nodes in the hierarchy  (rows of S)
+                T = context_length             (37 quarters here)
+                L = prediction_length          (4 quarters here)
+            The last dimension packs 4 per‑step features:
+                0. target (or lag‑1 value for decoder)
+                1. calendar covariate          (quarter id / age)
+                2. observed‑values mask        (1 = present, 0 = missing)
+                3. static category id          (broadcast)
+        """
+    
+        # ---------- tensors directly from the batch -----------------------
+        past_target   = data["past_target"]          # (B, T, N)
+        past_obs      = data["past_observed_values"]
+        past_timefeat = data["past_time_feat"]       # (B, T, 1)
+    
+        future_obs      = data["future_observed_values"]
+        future_timefeat = data["future_time_feat"]
+        static_cat = data[FieldName.FEAT_STATIC_CAT] # th
+    
+        # ---------- dimensions & context ---------------------------------
+        B, T, N = past_target.shape
+        L       = future_obs.shape[1]            # prediction_length
+        ctx     = past_target.context            # gpu(0) or cpu(0)
+    
+        # ---------- static category  (B,1) -> (B,N,1) --------------------
+        static_cat = data[FieldName.FEAT_STATIC_CAT].expand_dims(1)   # (B,1,1)
+        static_cat = mx.nd.broadcast_to(static_cat, shape=(B, N, 1))  # (B,N,1)
+    
+        stc_enc = mx.nd.broadcast_to(static_cat.expand_dims(-1), (B, N, T, 1))
+        stc_dec = mx.nd.broadcast_to(static_cat.expand_dims(-1), (B, N, L, 1))
+    
+        # ---------- calendar features ------------------------------------
+        # past: (B,T,1) -> (B,1,T,1) -> (B,N,T,1)
+        ptf = past_timefeat.transpose((0, 2, 1)).expand_dims(-1)       # (B,1,T,1)
+        ptf = mx.nd.broadcast_to(ptf, shape=(B, N, T, 1))
+    
+        # future: (B,L,1) -> (B,1,L,1) -> (B,N,L,1)
+        ftf = future_timefeat.transpose((0, 2, 1)).expand_dims(-1)     # (B,1,L,1)
+        ftf = mx.nd.broadcast_to(ftf, shape=(B, N, L, 1))
+    
+        # ---------- observed‑value masks ---------------------------------
+        pob = past_obs.transpose((0, 2, 1)).expand_dims(-1)            # (B,N,T,1)
+        fob = future_obs.transpose((0, 2, 1)).expand_dims(-1)          # (B,N,L,1)
+    
+        # ---------- target channels --------------------------------------
+        # encoder uses the true past
+        ptt = past_target.transpose((0, 2, 1)).expand_dims(-1)         # (B,N,T,1)
+    
+        # decoder starts with the last context value (lag‑1), repeated over L
+        last_ctx = past_target[:, -1, :].expand_dims(-1).expand_dims(-1)  # (B,N,1,1)
+        last_ctx = mx.nd.broadcast_to(last_ctx, shape=(B, N, L, 1))       # (B,N,L,1)
+    
+        # ---------- concatenate features ---------------------------------
+        enc_tokens = mx.nd.concat(ptt, ptf, pob, stc_enc, dim=-1)      # (B,N,T,4)
+        dec_tokens = mx.nd.concat(last_ctx, ftf, fob, stc_dec, dim=-1) # (B,N,L,4)
+    
+        return enc_tokens.astype("float32"), dec_tokens.astype("float32")
+
+
+
+    def _basic_feature_chain(self) -> Transformation:
         remove_field_names = [
             FieldName.FEAT_DYNAMIC_CAT,
             FieldName.FEAT_STATIC_REAL,
@@ -290,18 +388,26 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             ],
         )
 
+    def _full_transform(self, mode: str) -> Transformation:
+        return self._basic_feature_chain()           
+             + self._create_instance_splitter(mode)  
+             + self._token_builder()
+
+
     def create_training_data_loader(
         self,
         data: Dataset,
         **kwargs,
     ) -> DataLoader:
+    
         input_names = get_hybrid_forward_input_names(
             HierarchicalTransformerTrainingNetwork
         )
-        instance_splitter = self._create_instance_splitter("training")
+        wanted = ["enc_tokens", "dec_tokens", FieldName.FUTURE_TARGET]
+        transform = self._full_transform("training") + SelectFields(wanted)
         return TrainDataLoader(
             dataset=data,
-            transform=instance_splitter + SelectFields(input_names),
+            transform=transform,
             batch_size=self.batch_size,
             stack_fn=partial(batchify, ctx=self.trainer.ctx, dtype=self.dtype),
             **kwargs,
@@ -315,10 +421,12 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         input_names = get_hybrid_forward_input_names(
             HierarchicalTransformerTrainingNetwork
         )
-        instance_splitter = self._create_instance_splitter("validation")
+        #instance_splitter = self._create_instance_splitter("validation")
+        wanted = ["enc_tokens", "dec_tokens", FieldName.FUTURE_TARGET]
+        transform = self._full_transform("validation") + SelectFields(wanted)
         return ValidationDataLoader(
             dataset=data,
-            transform=instance_splitter + SelectFields(input_names),
+            transform=transform,
             batch_size=self.batch_size,
             stack_fn=partial(batchify, ctx=self.trainer.ctx, dtype=self.dtype),
         )
