@@ -255,7 +255,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         future_obs      = to_nd(entry["future_observed_values"])  # (L, N)
         future_timefeat = to_nd(entry["future_time_feat"])        # (L, 1)
     
-        static_cat = to_nd(entry["static_cat"])      # (1,) or (C,)
+        static_cat = to_nd(entry[FieldName.FEAT_STATIC_CAT])      # (1,) or (C,)
     
         # ---- shapes ------------------------------------------------------
         T, N = past_target.shape
