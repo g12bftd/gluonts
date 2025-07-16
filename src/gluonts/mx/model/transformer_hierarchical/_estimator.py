@@ -405,7 +405,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         input_names = get_hybrid_forward_input_names(
             HierarchicalTransformerTrainingNetwork
         )
-        wanted = ["enc_tokens", "dec_tokens", FieldName.FUTURE_TARGET]
+        wanted = ["enc_tokens", "dec_tokens", "future_target"]
         transform = self._full_transform("training") + SelectFields(wanted)
         return TrainDataLoader(
             dataset=data,
@@ -424,7 +424,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             HierarchicalTransformerTrainingNetwork
         )
         #instance_splitter = self._create_instance_splitter("validation")
-        wanted = ["enc_tokens", "dec_tokens", FieldName.FUTURE_TARGET]
+        wanted = ["enc_tokens", "dec_tokens", "future_target"]
         transform = self._full_transform("validation") + SelectFields(wanted)
         return ValidationDataLoader(
             dataset=data,
