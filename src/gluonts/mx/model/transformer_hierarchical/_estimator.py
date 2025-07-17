@@ -250,10 +250,10 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         # ---- tensors -----------------------------------------------------
         past_target   = to_nd(entry["past_target"])            # (T, N)
         past_obs      = to_nd(entry["past_observed_values"])   # (T, N)
-        past_timefeat = to_nd(entry["past_time_feat"])         # (T, 1)
+        past_timefeat = to_nd(entry["past_time_feat"].T)         # (T, 1)
     
         future_obs      = to_nd(entry["future_observed_values"])  # (L, N)
-        future_timefeat = to_nd(entry["future_time_feat"])        # (L, 1)
+        future_timefeat = to_nd(entry["future_time_feat"].T)        # (L, 1)
     
         static_cat = to_nd(entry[FieldName.FEAT_STATIC_CAT])      # (1,) or (C,)
 
@@ -263,8 +263,6 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         print(f"future_obs shape: {future_obs.shape}")
         print(f"future_timefeat shape: {future_timefeat.shape}")
         print(f"static_cat shape: {static_cat.shape}")
-
-
     
         # ---- shapes ------------------------------------------------------
         T, N = past_target.shape
