@@ -264,12 +264,13 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         print(f"future_timefeat shape: {future_timefeat.shape}")
         print(f"static_cat shape: {static_cat.shape}")
 
-        print(f"Context timesteps: {T}, number of series: {N}, prediction length: {L}")
 
     
         # ---- shapes ------------------------------------------------------
         T, N = past_target.shape
         L    = future_obs.shape[0]
+
+        print(f"Context timesteps: {T}, number of series: {N}, prediction length: {L}")
     
         # ---- static category  (1,C) → (N,1) ------------------------------
         static_cat = static_cat.expand_dims(0)           # (1,C)
