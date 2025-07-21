@@ -68,6 +68,7 @@ class FourierDateFeatures:
         # reocurring freq
         freqs = [
             "month",
+            "quarter",
             "day",
             "hour",
             "minute",
@@ -92,6 +93,7 @@ def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
     features = {
         "M": ["weekofyear"],
         "ME": ["weekofyear"],
+        "Q": ["quarter"],
         "W": ["daysinmonth", "weekofyear"],
         "D": ["dayofweek"],
         "B": ["dayofweek", "dayofyear"],
@@ -126,6 +128,8 @@ def get_lags_for_frequency(
         lags = [[1, 24, 168]]
     elif offset.name in ("min", "T"):
         lags = [[1, 4, 12, 24, 48]]
+    elif offset.name == "Q":
+        lags = [[1, 4]]
     else:
         lags = [[1]]
 
