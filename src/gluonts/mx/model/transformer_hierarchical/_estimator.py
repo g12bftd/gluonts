@@ -22,11 +22,7 @@ from gluonts.mx.model.estimator import GluonEstimator
 from gluonts.mx.model.predictor import RepresentableBlockPredictor
 from gluonts.mx.trainer import Trainer
 from gluonts.mx.util import copy_parameters, get_hybrid_forward_input_names
-from gluonts.time_feature import (
-    TimeFeature,
-    get_lags_for_frequency,
-    time_features_from_frequency_str,
-)
+from gluonts.time_feature import TimeFeature, norm_freq_str, time_features_from_frequency_str
 from gluonts.transform import (
     AddAgeFeature,
     AddObservedValuesIndicator,
@@ -52,6 +48,85 @@ from .transformer_decoder import HierarchicalTransformerDecoder
 from gluonts.mx.model.deepvar_hierarchical._estimator import projection_mat
 
 logger = logging.getLogger(__name__)
+
+
+class FourierDateFeatures:
+    @validated()
+    def __init__(self, freq: str) -> None:
+        # reocurring freq
+        freqs = [
+            "month",
+            "quarter",
+            "day",
+            "hour",
+            "minute",
+            "weekofyear",
+            "weekday",
+            "dayofweek",
+            "dayofyear",
+            "daysinmonth",
+        ]
+
+        assert freq in freqs
+        self.freq = freq
+
+    def __call__(self, index: pd.PeriodIndex) -> np.ndarray:
+        values = getattr(index, self.freq)
+        num_values = max(values) + 1
+        steps = [x * 2.0 * np.pi / num_values for x in values]
+        return np.vstack([np.cos(steps), np.sin(steps)])
+
+
+def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
+    features = {
+        "M": ["weekofyear"],
+        "ME": ["weekofyear"],
+        "Q": ["quarter"],
+        "QE": ["quarter"],
+        "W": ["daysinmonth", "weekofyear"],
+        "D": ["dayofweek"],
+        "B": ["dayofweek", "dayofyear"],
+        "H": ["hour", "dayofweek"],
+        "h": ["hour", "dayofweek"],
+        "min": ["minute", "hour", "dayofweek"],
+        "T": ["minute", "hour", "dayofweek"],
+    }
+
+    offset = to_offset(freq_str)
+    granularity = norm_freq_str(offset.name)
+    print(f"granularity: {granularity}, features: {features}, offset: {offset.name}")
+    assert granularity in features, f"freq {granularity} not supported"
+
+    feature_classes: List[TimeFeature] = [
+        FourierDateFeatures(freq=freq) for freq in features[granularity]
+    ]
+    return feature_classes
+
+
+def get_lags_for_frequency(
+    freq_str: str, num_lags: Optional[int] = None
+) -> List[int]:
+    offset = to_offset(freq_str)
+
+    if offset.name in ["M", "ME"]:
+        lags = [[1, 12]]
+    elif offset.name == "D":
+        lags = [[1, 7, 14]]
+    elif offset.name == "B":
+        lags = [[1, 2]]
+    elif offset.name in ["H", "h"]:
+        lags = [[1, 24, 168]]
+    elif offset.name in ("min", "T"):
+        lags = [[1, 4, 12, 24, 48]]
+    elif offset.name in ["Q", "QE", "QE-DEC"]:
+        lags = [[1, 4]]
+    else:
+        lags = [[1]]
+
+    # use less lags
+    output_lags = list(int(lag) for sub_list in lags for lag in sub_list)
+    output_lags = sorted(list(set(output_lags)))
+    return output_lags[:num_lags]
 
 class HierarchicalTransformerEstimator(GluonEstimator):
 
