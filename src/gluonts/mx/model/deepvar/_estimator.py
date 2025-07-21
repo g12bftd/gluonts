@@ -105,6 +105,7 @@ def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
 
     offset = to_offset(freq_str)
     granularity = norm_freq_str(offset.name)
+    print(f"granularity: {granularity}, features: {features}")
     assert granularity in features, f"freq {granularity} not supported"
 
     feature_classes: List[TimeFeature] = [
