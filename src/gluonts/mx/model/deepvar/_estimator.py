@@ -130,7 +130,7 @@ def get_lags_for_frequency(
         lags = [[1, 24, 168]]
     elif offset.name in ("min", "T"):
         lags = [[1, 4, 12, 24, 48]]
-    elif offset.name == "Q":
+    elif offset.name in ("Q", "QE"):
         lags = [[1, 4]]
     else:
         lags = [[1]]
