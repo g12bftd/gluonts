@@ -5,6 +5,7 @@ import logging
 from mxnet.gluon import HybridBlock
 import mxnet as mx
 import numpy as np
+import pandas as pd
 
 from gluonts.transform._base import MapTransformation
 from gluonts.core.component import validated
