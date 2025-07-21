@@ -27,21 +27,24 @@ from gluonts.mx.trainer import Trainer
 from gluonts.mx.util import copy_parameters, get_hybrid_forward_input_names
 from gluonts.time_feature import TimeFeature, norm_freq_str, time_features_from_frequency_str
 from gluonts.transform import (
-    AddAgeFeature,
     AddObservedValuesIndicator,
     AddTimeFeatures,
     AsNumpyArray,
+    CDFtoGaussianTransform,
     Chain,
+    ExpandDimArray,
     ExpectedNumInstanceSampler,
     InstanceSampler,
     InstanceSplitter,
-    RemoveFields,
+    RenameFields,
     SelectFields,
-    SetField,
+    SetFieldIfNotPresent,
+    TargetDimIndicator,
     TestSplitSampler,
     Transformation,
     ValidationSplitSampler,
     VstackFeatures,
+    cdf_to_gaussian_forward_transform,
 )
 
 from ._network import HierarchicalTransformerPredictionNetwork, HierarchicalTransformerTrainingNetwork
