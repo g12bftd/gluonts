@@ -377,27 +377,19 @@ class HierarchicalTransformerEstimator(GluonEstimator):
 
 
 
-    def _basic_feature_chain(self) -> Transformation:
-        remove_field_names = [
-            FieldName.FEAT_DYNAMIC_CAT,
-            FieldName.FEAT_STATIC_REAL,
-        ]
-        if not self.use_feat_dynamic_real:
-            remove_field_names.append(FieldName.FEAT_DYNAMIC_REAL)
 
+    def _basic_feature_chain(self) -> Transformation:
         return Chain(
-            [RemoveFields(field_names=remove_field_names)]
-            + (
-                [SetField(output_field=FieldName.FEAT_STATIC_CAT, value=[0.0])]
-                if not self.use_feat_static_cat
-                else []
-            )
-            + [
-                AsNumpyArray(field=FieldName.FEAT_STATIC_CAT, expected_ndim=1),
+            [
                 AsNumpyArray(
                     field=FieldName.TARGET,
-                    # in the following line, we add 1 for the time dimension
                     expected_ndim=1 + len(self.distr_output.event_shape),
+                ),
+                # maps the target to (1, T)
+                # if the target data is uni dimensional
+                ExpandDimArray(
+                    field=FieldName.TARGET,
+                    axis=0 if self.distr_output.event_shape[0] == 1 else None,
                 ),
                 AddObservedValuesIndicator(
                     target_field=FieldName.TARGET,
@@ -410,24 +402,26 @@ class HierarchicalTransformerEstimator(GluonEstimator):
                     time_features=self.time_features,
                     pred_length=self.prediction_length,
                 ),
-                AddAgeFeature(
-                    target_field=FieldName.TARGET,
-                    output_field=FieldName.FEAT_AGE,
-                    pred_length=self.prediction_length,
-                    log_scale=True,
-                ),
                 VstackFeatures(
                     output_field=FieldName.FEAT_TIME,
-                    input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
+                    input_fields=[FieldName.FEAT_TIME]
                     + (
                         [FieldName.FEAT_DYNAMIC_REAL]
                         if self.use_feat_dynamic_real
                         else []
                     ),
                 ),
+                SetFieldIfNotPresent(
+                    field=FieldName.FEAT_STATIC_CAT, value=[0.0]
+                ),
+                TargetDimIndicator(
+                    field_name="target_dimension_indicator",
+                    target_field=FieldName.TARGET,
+                ),
+                AsNumpyArray(field=FieldName.FEAT_STATIC_CAT, expected_ndim=1),
             ]
         )
-
+        
     def _create_instance_splitter(self, mode: str):
         assert mode in ["training", "validation", "test"]
 
