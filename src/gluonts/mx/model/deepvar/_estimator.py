@@ -106,7 +106,7 @@ def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
 
     offset = to_offset(freq_str)
     granularity = norm_freq_str(offset.name)
-    print(f"granularity: {granularity}, features: {features}, offset: {offset}")
+    print(f"granularity: {granularity}, features: {features}, offset: {offset.name}")
     assert granularity in features, f"freq {granularity} not supported"
 
     feature_classes: List[TimeFeature] = [
@@ -130,7 +130,7 @@ def get_lags_for_frequency(
         lags = [[1, 24, 168]]
     elif offset.name in ("min", "T"):
         lags = [[1, 4, 12, 24, 48]]
-    elif offset.name in ("Q", "QE"):
+    elif offset.name in ["Q", "QE"]:
         lags = [[1, 4]]
     else:
         lags = [[1]]
