@@ -94,6 +94,7 @@ def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
         "M": ["weekofyear"],
         "ME": ["weekofyear"],
         "Q": ["quarter"],
+        "QE": ["quarter"],
         "W": ["daysinmonth", "weekofyear"],
         "D": ["dayofweek"],
         "B": ["dayofweek", "dayofyear"],
