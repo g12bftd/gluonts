@@ -448,7 +448,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             ],
         )
 
-    def create_transform(self) -> Transformation:
+    def create_transformation(self) -> Transformation:
         return (
             self._basic_feature_chain()          # feature engineering
         )
