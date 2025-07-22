@@ -448,11 +448,9 @@ class HierarchicalTransformerEstimator(GluonEstimator):
             ],
         )
 
-    def _full_transform(self, mode: str) -> Transformation:
+    def create_transform(self) -> Transformation:
         return (
             self._basic_feature_chain()          # feature engineering
-            + self._create_instance_splitter(mode)  # windowing (training / val / test)
-            + self._token_builder()                 # adds "enc_tokens" & "dec_tokens"
         )
 
 
@@ -465,8 +463,9 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         input_names = get_hybrid_forward_input_names(
             HierarchicalTransformerTrainingNetwork
         )
-        wanted = ["enc_tokens", "dec_tokens", "future_target"]
-        transform = self._full_transform("training") + SelectFields(wanted)
+        input_names = get_hybrid_forward_input_names(HierarchicalTransformerTrainingNetwork)
+        instance_splitter = self.create_instance_splitter("training")
+        transform = instance_splitter + SelectFields(wanted)
         return TrainDataLoader(
             dataset=data,
             transform=transform,
