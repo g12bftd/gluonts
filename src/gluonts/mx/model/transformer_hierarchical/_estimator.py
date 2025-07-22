@@ -465,7 +465,7 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         )
         input_names = get_hybrid_forward_input_names(HierarchicalTransformerTrainingNetwork)
         instance_splitter = self._create_instance_splitter("training")
-        transform = instance_splitter + SelectFields(wanted)
+        transform = instance_splitter + SelectFields(input_names)
         return TrainDataLoader(
             dataset=data,
             transform=transform,
@@ -479,17 +479,15 @@ class HierarchicalTransformerEstimator(GluonEstimator):
         data: Dataset,
         **kwargs,
     ) -> DataLoader:
-        input_names = get_hybrid_forward_input_names(
-            HierarchicalTransformerTrainingNetwork
-        )
-        #instance_splitter = self._create_instance_splitter("validation")
-        wanted = ["enc_tokens", "dec_tokens", "future_target"]
-        transform = self._full_transform("validation") + SelectFields(wanted)
+        input_names = get_hybrid_forward_input_names(HierarchicalTransformerTrainingNetwork)
+        instance_splitter = self._create_instance_splitter("validation")
+        transform = instance_splitter + SelectFields(input_names)
         return ValidationDataLoader(
             dataset=data,
             transform=transform,
             batch_size=self.batch_size,
             stack_fn=partial(batchify, ctx=self.trainer.ctx, dtype=self.dtype),
+            **kwargs,
         )
 
     def create_training_network(self) -> HierarchicalTransformerTrainingNetwork:
